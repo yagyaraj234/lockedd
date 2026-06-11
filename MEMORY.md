@@ -1,0 +1,1 @@
+- [bun-default](feedback_bun.md) — Always use `bun` for install/build, not npm/yarn

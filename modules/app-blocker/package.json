@@ -1,0 +1,8 @@
+{
+  "name": "app-blocker",
+  "version": "1.0.0",
+  "description": "App blocker module",
+  "main": "src/index.ts",
+  "types": "src/index.d.ts",
+  "source": "src/index.ts"
+}

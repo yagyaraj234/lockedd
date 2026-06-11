@@ -1,0 +1,8 @@
+{
+  "name": "prevention-mode",
+  "version": "1.0.0",
+  "description": "Prevention mode module",
+  "main": "src/index.ts",
+  "types": "src/index.d.ts",
+  "source": "src/index.ts"
+}

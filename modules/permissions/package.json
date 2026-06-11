@@ -1,0 +1,8 @@
+{
+  "name": "permissions",
+  "version": "1.0.0",
+  "description": "Permission request module",
+  "main": "src/index.ts",
+  "types": "src/index.d.ts",
+  "source": "src/index.ts"
+}

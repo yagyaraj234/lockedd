@@ -5,7 +5,13 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "plugins": [
+      "./modules/permissions/app.plugin.js",
+      "./modules/app-blocker/app.plugin.js",
+      "./modules/step-counter/app.plugin.js",
+      "./modules/prevention-mode/app.plugin.js"
+    ],
     "ios": {
       "supportsTablet": true
     },
@@ -16,7 +22,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.yagyaraj.locked"
     },
     "web": {
       "favicon": "./assets/favicon.png"
