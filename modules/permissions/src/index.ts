@@ -22,4 +22,8 @@ export const Permissions = {
   async requestBatteryOptimization(): Promise<boolean> {
     return PermissionsModule.requestBatteryOptimization();
   },
+
+  async requestNotifications(): Promise<boolean> {
+    return PermissionsModule.requestNotifications();
+  },
 };

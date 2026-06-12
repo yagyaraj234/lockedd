@@ -1,35 +1,80 @@
 import React, { useEffect, useState } from 'react';
+import { Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import { createStackNavigator, TransitionPresets } from '@react-navigation/stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Colors } from '../colors';
-import { getSettings } from '../store/storage';
+import { getSettings, subscribeSettings } from '../store/storage';
 import { OnboardingScreen1 } from '../screens/onboarding/OnboardingScreen1';
 import { OnboardingScreen2 } from '../screens/onboarding/OnboardingScreen2';
 import { OnboardingScreen3 } from '../screens/onboarding/OnboardingScreen3';
 import { OnboardingScreen4 } from '../screens/onboarding/OnboardingScreen4';
 import { OnboardingScreen5 } from '../screens/onboarding/OnboardingScreen5';
 import { HomeScreen } from '../screens/HomeScreen';
+import { BlockedAppsScreen } from '../screens/BlockedAppsScreen';
 import { AddAppsScreen } from '../screens/AddAppsScreen';
 import { ConfigurationScreen } from '../screens/ConfigurationScreen';
 import { UnlockProgressScreen } from '../screens/UnlockProgressScreen';
 
 const Stack = createStackNavigator();
+const Tab = createBottomTabNavigator();
+
+const tabIcon = (glyph: string) => ({ color }: { color: string }) =>
+  <Text style={{ fontSize: 22, color }}>{glyph}</Text>;
+
+const MainTabs = () => (
+  <Tab.Navigator
+    screenOptions={{
+      headerShown: false,
+      tabBarActiveTintColor: Colors.accent,
+      tabBarInactiveTintColor: Colors.textTertiary,
+      tabBarStyle: {
+        backgroundColor: Colors.bgSecondary,
+        borderTopColor: Colors.bgSecondary,
+      },
+      tabBarLabelStyle: { fontSize: 11 },
+    }}
+  >
+    <Tab.Screen
+      name="Home"
+      component={HomeScreen}
+      options={{ tabBarIcon: tabIcon('🏠') }}
+    />
+    <Tab.Screen
+      name="BlockedApps"
+      component={BlockedAppsScreen}
+      options={{ title: 'Blocked Apps', tabBarIcon: tabIcon('🚫') }}
+    />
+    <Tab.Screen
+      name="Settings"
+      component={ConfigurationScreen}
+      options={{ tabBarIcon: tabIcon('⚙') }}
+    />
+  </Tab.Navigator>
+);
 
 export const AppNavigator = () => {
   const [onboardingComplete, setOnboardingComplete] = useState(false);
 
   useEffect(() => {
-    try {
-      const settings = getSettings();
-      setOnboardingComplete(settings.onboardingComplete);
-    } catch {
-      setOnboardingComplete(false);
-    }
+    const refresh = () => {
+      try {
+        setOnboardingComplete(getSettings().onboardingComplete);
+      } catch {
+        setOnboardingComplete(false);
+      }
+    };
+    refresh();
+    // Re-read when settings change (e.g. onboarding completes) so the navigator
+    // swaps from the onboarding stack to the main app stack.
+    return subscribeSettings(refresh);
   }, []);
 
   const screenOptions = {
     headerShown: false,
     cardStyle: { backgroundColor: Colors.bg },
+    gestureEnabled: true,
+    ...TransitionPresets.SlideFromRightIOS,
   };
 
   return (
@@ -45,9 +90,8 @@ export const AppNavigator = () => {
           </Stack.Group>
         ) : (
           <Stack.Group>
-            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="Tabs" component={MainTabs} />
             <Stack.Screen name="AddApps" component={AddAppsScreen} />
-            <Stack.Screen name="Configuration" component={ConfigurationScreen} />
             <Stack.Screen name="UnlockProgress" component={UnlockProgressScreen} />
           </Stack.Group>
         )}

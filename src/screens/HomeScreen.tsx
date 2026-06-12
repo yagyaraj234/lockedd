@@ -24,9 +24,6 @@ export const HomeScreen = ({ navigation }: any) => {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Locked</Text>
-        <TouchableOpacity onPress={() => navigation.navigate('Configuration')}>
-          <Text style={styles.headerButton}>⚙</Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.section}>

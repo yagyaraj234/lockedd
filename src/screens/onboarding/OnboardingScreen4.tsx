@@ -1,20 +1,16 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
 import { Colors } from '../../colors';
-
-// Permissions module
-const Permissions = {
-  async requestAccessibility() { return true; },
-  async requestOverlay() { return true; },
-  async requestUsageStats() { return true; },
-  async requestActivityRecognition() { return true; },
-};
+import { Permissions } from '../../../modules/permissions/src';
+import { updateSettings } from '../../store/storage';
 
 interface PermissionState {
   accessibility: boolean;
   overlay: boolean;
   usageStats: boolean;
   activityRecognition: boolean;
+  batteryOptimization: boolean;
+  notifications: boolean;
 }
 
 export const OnboardingScreen4 = ({ navigation }: any) => {
@@ -23,6 +19,8 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
     overlay: false,
     usageStats: false,
     activityRecognition: false,
+    batteryOptimization: false,
+    notifications: false,
   });
 
   const requestPermission = async (type: keyof PermissionState) => {
@@ -41,6 +39,12 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
         case 'activityRecognition':
           result = await Permissions.requestActivityRecognition();
           break;
+        case 'batteryOptimization':
+          result = await Permissions.requestBatteryOptimization();
+          break;
+        case 'notifications':
+          result = await Permissions.requestNotifications();
+          break;
       }
       setPermissions((prev) => ({ ...prev, [type]: result }));
     } catch (e) {
@@ -53,13 +57,15 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
     { key: 'overlay', label: 'Draw Over Apps', desc: 'Required for overlay' },
     { key: 'usageStats', label: 'Usage Access', desc: 'Required for installed app list' },
     { key: 'activityRecognition', label: 'Activity Recognition', desc: 'Required for step tracking' },
+    { key: 'batteryOptimization', label: 'Battery Optimization', desc: 'Keeps blocking active in background' },
+    { key: 'notifications', label: 'Notifications', desc: 'Required on Android 13+' },
   ] as const;
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      scrollEnabled={false}
+      showsVerticalScrollIndicator={false}
     >
       <Text style={styles.number}>04</Text>
       <Text style={styles.title}>Granting</Text>
@@ -96,7 +102,7 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
       </View>
 
       <View style={styles.dots}>
-        {[0, 1, 2, 3, 4].map((i) => (
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <View
             key={i}
             style={[styles.dot, i === 3 && styles.dotActive]}
@@ -111,7 +117,7 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
         >
           <Text style={styles.ctaText}>Continue</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => navigation.navigate('Home')}>
+        <TouchableOpacity onPress={() => updateSettings({ onboardingComplete: true })}>
           <Text style={styles.skip}>Skip for now</Text>
         </TouchableOpacity>
       </View>
@@ -127,7 +133,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 24,
     paddingTop: 80,
-    paddingBottom: 40,
+    paddingBottom: 60,
   },
   number: {
     fontSize: 80,

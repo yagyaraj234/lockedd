@@ -3,132 +3,67 @@ package expo.modules.preventionmode
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import com.react.native.mmkv.MMKVModule
 
+// Thin device-admin wrapper. All prevention-mode state (enabled flag, the 12-hour
+// disable cooldown) lives in JS/MMKV; this module only performs the privileged
+// device-admin operations that JS cannot. The actual grant result is verified by
+// JS via isActive() after the system prompt returns (on app resume), because
+// ACTION_ADD_DEVICE_ADMIN runs in a separate Activity and startActivity() returns
+// before the user has answered.
 class PreventionModeModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exception("No React context")
 
+  private val adminComponent: ComponentName
+    get() = ComponentName(context, LockedDeviceAdminReceiver::class.java)
+
+  private val dpm: DevicePolicyManager
+    get() = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+
   override fun definition() = ModuleDefinition {
     Name("PreventionMode")
 
-    AsyncFunction("enable") { promise: (Any?) -> Unit ->
+    AsyncFunction("isActive") {
       try {
-        val admin = ComponentName(context, DeviceAdminReceiver::class.java)
-        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-
-        // Check if already enabled
-        if (dpm.isAdminActive(admin)) {
-          promise(true)
-          return@AsyncFunction
-        }
-
-        // Would need user to activate in settings
-        // For now, just mark as enabled in MMKV
-        val mmkv = MMKVModule.getMMKVInstance() ?: return@AsyncFunction
-        val settingsJson = mmkv.decodeString("settings") ?: "{}"
-        val updated = settingsJson
-          .replace(
-            Regex("\"preventionMode\":\\s*\\w+"),
-            "\"preventionMode\":true"
-          )
-          .let {
-            if (!it.contains("\"preventionMode\"")) {
-              it.replace("}", ",\"preventionMode\":true}")
-            } else {
-              it
-            }
-          }
-        mmkv.encodeString("settings", updated)
-        promise(true)
+        dpm.isAdminActive(adminComponent)
       } catch (e: Exception) {
-        promise(false)
+        false
       }
     }
 
-    AsyncFunction("disable") { promise: (Any?) -> Unit ->
+    AsyncFunction("enable") {
       try {
-        val mmkv = MMKVModule.getMMKVInstance() ?: return@AsyncFunction
-        val settingsJson = mmkv.decodeString("settings") ?: "{}"
-
-        // Check if 12 hours have passed
-        val requestedAt = settingsJson
-          .substringAfter("\"preventionModeOffRequestedAt\":")
-          .substringBefore(",")
-          .substringBefore("}")
-          .toLongOrNull() ?: 0
-
-        val now = System.currentTimeMillis()
-        val twelveHours = 12 * 60 * 60 * 1000
-
-        if (requestedAt > 0 && now - requestedAt >= twelveHours) {
-          // Can disable now
-          val updated = settingsJson
-            .replace(
-              Regex("\"preventionMode\":\\s*\\w+"),
-              "\"preventionMode\":false"
-            )
-            .replace(
-              Regex("\"preventionModeOffRequestedAt\":\\s*\\d+"),
-              "\"preventionModeOffRequestedAt\":null"
-            )
-          mmkv.encodeString("settings", updated)
-          promise(true)
+        if (dpm.isAdminActive(adminComponent)) {
+          true
         } else {
-          promise(false)
+          val activity = appContext.currentActivity ?: throw Exception("No Activity context")
+          val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, adminComponent)
+            putExtra(
+              DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+              "Prevention Mode stops you from uninstalling Locked during focus blocks."
+            )
+          }
+          activity.startActivity(intent)
+          // Intent launched only; JS confirms the real result via isActive() on resume.
+          true
         }
       } catch (e: Exception) {
-        promise(false)
+        false
       }
     }
 
-    AsyncFunction("requestDisable") { promise: (Any?) -> Unit ->
+    AsyncFunction("disable") {
       try {
-        val mmkv = MMKVModule.getMMKVInstance() ?: return@AsyncFunction
-        val settingsJson = mmkv.decodeString("settings") ?: "{}"
-
-        // Store the request time
-        val now = System.currentTimeMillis()
-        val updated = settingsJson
-          .replace(
-            Regex("\"preventionModeOffRequestedAt\":\\s*\\w*"),
-            "\"preventionModeOffRequestedAt\":$now"
-          )
-          .let {
-            if (!it.contains("\"preventionModeOffRequestedAt\"")) {
-              it.replace("}", ",\"preventionModeOffRequestedAt\":$now}")
-            } else {
-              it
-            }
-          }
-        mmkv.encodeString("settings", updated)
-        promise(true)
+        if (dpm.isAdminActive(adminComponent)) {
+          dpm.removeActiveAdmin(adminComponent)
+        }
+        true
       } catch (e: Exception) {
-        promise(false)
-      }
-    }
-
-    AsyncFunction("getStatus") { promise: (Any?) -> Unit ->
-      try {
-        val mmkv = MMKVModule.getMMKVInstance() ?: return@AsyncFunction
-        val settingsJson = mmkv.decodeString("settings") ?: "{}"
-
-        val enabled = settingsJson.contains("\"preventionMode\":true")
-        val requestedAtStr = settingsJson
-          .substringAfter("\"preventionModeOffRequestedAt\":")
-          .substringBefore(",")
-          .substringBefore("}")
-        val requestedAt = requestedAtStr.toLongOrNull() ?: 0
-
-        val result = mapOf(
-          "enabled" to enabled,
-          "requestedOffAt" to requestedAt
-        )
-        promise(result)
-      } catch (e: Exception) {
-        promise(mapOf("enabled" to false, "requestedOffAt" to 0))
+        false
       }
     }
   }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Colors } from '../../colors';
+import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen3 = ({ navigation }: any) => {
   return (
@@ -36,7 +37,7 @@ export const OnboardingScreen3 = ({ navigation }: any) => {
         >
           <Text style={styles.ctaText}>Continue</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => navigation.navigate('Home')}>
+        <TouchableOpacity onPress={() => updateSettings({ onboardingComplete: true })}>
           <Text style={styles.skip}>Skip for now</Text>
         </TouchableOpacity>
       </View>

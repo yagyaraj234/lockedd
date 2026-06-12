@@ -8,4 +8,5 @@ export declare const AppBlocker: {
   getInstalledApps(): Promise<InstalledApp[]>;
   isAccessibilityEnabled(): Promise<boolean>;
   setBlockedApps(packages: string[]): boolean;
+  setTemporaryAllow(packageName: string, untilMillis: number): boolean;
 };

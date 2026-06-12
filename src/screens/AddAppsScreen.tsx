@@ -10,25 +10,8 @@ import {
 } from 'react-native';
 import { Colors } from '../colors';
 import { getBlockedApps, setBlockedApps } from '../store/storage';
-
-// AppBlocker module stub
-const AppBlocker = {
-  async getInstalledApps() {
-    return [] as InstalledApp[];
-  },
-  async isAccessibilityEnabled() {
-    return true;
-  },
-  setBlockedApps(packages: string[]) {
-    return true;
-  },
-};
-
-interface InstalledApp {
-  packageName: string;
-  appName: string;
-  iconBase64: string;
-}
+import { AppBlocker, type InstalledApp } from '../../modules/app-blocker/src';
+import { BlockDurationModal } from '../components/BlockDurationModal';
 
 interface AppWithSelected extends InstalledApp {
   selected: boolean;
@@ -39,6 +22,8 @@ export const AddAppsScreen = ({ navigation }: any) => {
   const [filtered, setFiltered] = useState<AppWithSelected[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [showDurationModal, setShowDurationModal] = useState(false);
+  const [selectedAppsToBlock, setSelectedAppsToBlock] = useState<AppWithSelected[]>([]);
 
   useEffect(() => {
     loadApps();
@@ -84,14 +69,39 @@ export const AddAppsScreen = ({ navigation }: any) => {
 
   const saveAndClose = () => {
     const selected = apps.filter((a) => a.selected);
-    setBlockedApps(
-      selected.map((a) => ({
-        packageName: a.packageName,
-        appName: a.appName,
-        iconBase64: a.iconBase64,
-        enabled: true,
-      }))
-    );
+    if (selected.length === 0) {
+      navigation.goBack();
+      return;
+    }
+    setSelectedAppsToBlock(selected);
+    setShowDurationModal(true);
+  };
+
+  const handleDurationSelect = (durationMs: number | 'permanent') => {
+    const now = Date.now();
+    const blockUntil = durationMs === 'permanent' ? undefined : now + durationMs;
+    const blockType = durationMs === 'permanent' ? 'permanent' : 'timed';
+
+    const blockedAppsToAdd = selectedAppsToBlock.map((a) => ({
+      packageName: a.packageName,
+      appName: a.appName,
+      iconBase64: a.iconBase64,
+      enabled: true,
+      blockType: blockType as 'permanent' | 'timed',
+      blockUntil,
+    }));
+
+    const existing = getBlockedApps();
+    const merged = [
+      ...existing.filter(
+        (ea) => !blockedAppsToAdd.some((ba) => ba.packageName === ea.packageName)
+      ),
+      ...blockedAppsToAdd,
+    ];
+
+    setBlockedApps(merged);
+    setShowDurationModal(false);
+    setSelectedAppsToBlock([]);
     navigation.goBack();
   };
 
@@ -124,40 +134,52 @@ export const AddAppsScreen = ({ navigation }: any) => {
   );
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.back}>‹</Text>
+    <>
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <Text style={styles.back}>‹</Text>
+          </TouchableOpacity>
+          <Text style={styles.title}>Select Apps</Text>
+          <Text style={styles.done}>Done</Text>
+        </View>
+
+        <TextInput
+          style={styles.search}
+          placeholder="Search for an app..."
+          placeholderTextColor={Colors.textTertiary}
+          value={search}
+          onChangeText={handleSearch}
+        />
+
+        {loading ? (
+          <View style={styles.centerContent}>
+            <Text style={styles.loadingText}>Loading apps...</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filtered}
+            renderItem={renderItem}
+            keyExtractor={(item) => item.packageName}
+            scrollEnabled
+          />
+        )}
+
+        <TouchableOpacity style={styles.cta} onPress={saveAndClose}>
+          <Text style={styles.ctaText}>Add Selected Apps</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>Select Apps</Text>
-        <Text style={styles.done}>Done</Text>
       </View>
 
-      <TextInput
-        style={styles.search}
-        placeholder="Search for an app..."
-        placeholderTextColor={Colors.textTertiary}
-        value={search}
-        onChangeText={handleSearch}
+      <BlockDurationModal
+        visible={showDurationModal}
+        appName={selectedAppsToBlock.length === 1 ? selectedAppsToBlock[0].appName : `${selectedAppsToBlock.length} apps`}
+        onSelect={handleDurationSelect}
+        onCancel={() => {
+          setShowDurationModal(false);
+          setSelectedAppsToBlock([]);
+        }}
       />
-
-      {loading ? (
-        <View style={styles.centerContent}>
-          <Text style={styles.loadingText}>Loading apps...</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={filtered}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.packageName}
-          scrollEnabled
-        />
-      )}
-
-      <TouchableOpacity style={styles.cta} onPress={saveAndClose}>
-        <Text style={styles.ctaText}>Add Selected Apps</Text>
-      </TouchableOpacity>
-    </View>
+    </>
   );
 };
 

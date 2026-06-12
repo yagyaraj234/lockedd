@@ -17,4 +17,8 @@ export const AppBlocker = {
   setBlockedApps(packages: string[]): boolean {
     return AppBlockerModule.setBlockedApps(packages);
   },
+
+  setTemporaryAllow(packageName: string, untilMillis: number): boolean {
+    return AppBlockerModule.setTemporaryAllow(packageName, untilMillis);
+  },
 };

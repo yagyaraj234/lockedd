@@ -5,33 +5,56 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  Image,
   Switch,
+  Alert,
+  AppState,
 } from 'react-native';
 import { Colors } from '../colors';
-import { getBlockedApps, setBlockedApps, getSettings, updateSettings } from '../store/storage';
+import {
+  getSettings,
+  updateSettings,
+  preventionDisableRemainingMs,
+  isPreventionDisableReady,
+} from '../store/storage';
+import { PreventionMode } from '../../modules/prevention-mode/src';
 
-interface BlockedApp {
-  packageName: string;
-  appName: string;
-  iconBase64: string;
-  enabled: boolean;
-}
-
-export const ConfigurationScreen = ({ navigation }: any) => {
-  const [blockedApps, setBlockedAppsState] = useState<BlockedApp[]>([]);
+// The Settings tab: unlock method + Prevention Mode. Blocked-app management
+// lives in its own tab (BlockedAppsScreen).
+export const ConfigurationScreen = () => {
   const [settings, setSettingsState] = useState(getSettings());
 
+  // The stored preventionMode flag can drift from the real device-admin state
+  // (e.g. the user grants/revokes admin in system settings, or cancels the grant
+  // prompt). Device admin is the source of truth — reconcile on mount and every
+  // time the app returns to the foreground (which is also when the grant prompt
+  // launched by enable() resolves).
   useEffect(() => {
-    setBlockedAppsState(getBlockedApps());
+    reconcilePreventionMode();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') reconcilePreventionMode();
+    });
+    return () => sub.remove();
   }, []);
 
-  const toggleApp = (packageName: string) => {
-    const updated = blockedApps.map((a) =>
-      a.packageName === packageName ? { ...a, enabled: !a.enabled } : a
-    );
-    setBlockedAppsState(updated);
-    setBlockedApps(updated);
+  const reconcilePreventionMode = async () => {
+    try {
+      const active = await PreventionMode.isActive();
+      setSettingsState((prev) => {
+        if (prev.preventionMode === active) return prev;
+        const next = {
+          ...prev,
+          preventionMode: active,
+          // A successful grant clears any pending disable request.
+          preventionModeOffRequestedAt: active
+            ? prev.preventionModeOffRequestedAt
+            : null,
+        };
+        updateSettings(next);
+        return next;
+      });
+    } catch {
+      // Native module unavailable (not yet rebuilt) — leave stored state as-is.
+    }
   };
 
   const toggleMode = (mode: 'temporary' | 'physical') => {
@@ -40,61 +63,64 @@ export const ConfigurationScreen = ({ navigation }: any) => {
     updateSettings(newSettings);
   };
 
-  const togglePreventionMode = (value: boolean) => {
-    const newSettings = { ...settings, preventionMode: value };
-    setSettingsState(newSettings);
-    updateSettings(newSettings);
+  const togglePreventionMode = async (value: boolean) => {
+    if (value) {
+      // Turning ON: cancel any pending disable request, then launch the system
+      // device-admin grant. The switch only flips ON once the grant is confirmed
+      // by reconcilePreventionMode() when the app returns to the foreground.
+      const cleared = { ...settings, preventionModeOffRequestedAt: null };
+      setSettingsState(cleared);
+      updateSettings(cleared);
+      try {
+        await PreventionMode.enable();
+      } catch {
+        Alert.alert('Unavailable', 'Prevention Mode needs a native rebuild to work.');
+      }
+      return;
+    }
+
+    // Turning OFF is gated by the 12-hour cooldown.
+    const requestedAt = settings.preventionModeOffRequestedAt;
+    if (requestedAt == null) {
+      const next = { ...settings, preventionModeOffRequestedAt: Date.now() };
+      setSettingsState(next);
+      updateSettings(next);
+      Alert.alert(
+        'Disable requested',
+        'Prevention Mode can be turned off in 12 hours. Come back and toggle it off again to confirm.'
+      );
+    } else if (isPreventionDisableReady()) {
+      try {
+        await PreventionMode.disable();
+      } catch {
+        // Even if the native call fails, clear the flag so the UI isn't stuck.
+      }
+      const next = {
+        ...settings,
+        preventionMode: false,
+        preventionModeOffRequestedAt: null,
+      };
+      setSettingsState(next);
+      updateSettings(next);
+      Alert.alert('Prevention Mode off', 'Uninstall protection has been removed.');
+    } else {
+      const hours = Math.ceil(preventionDisableRemainingMs() / (60 * 60 * 1000));
+      Alert.alert(
+        'Still locked',
+        `Prevention Mode can be turned off in about ${hours} hour${hours === 1 ? '' : 's'}.`
+      );
+    }
   };
 
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.back}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>Configuration</Text>
-        <View style={styles.spacer} />
-      </View>
-
-      {/* Blocked Apps Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>BLOCKED APPS</Text>
-        {blockedApps.length === 0 ? (
-          <Text style={styles.emptyText}>No apps blocked yet</Text>
-        ) : (
-          blockedApps.map((app) => (
-            <View key={app.packageName} style={styles.appRow}>
-              {app.iconBase64 ? (
-                <Image
-                  source={{ uri: `data:image/png;base64,${app.iconBase64}` }}
-                  style={styles.icon}
-                />
-              ) : (
-                <View style={styles.iconPlaceholder} />
-              )}
-              <View style={styles.appInfo}>
-                <Text style={styles.appName}>{app.appName}</Text>
-              </View>
-              <Switch
-                value={app.enabled}
-                onValueChange={() => toggleApp(app.packageName)}
-                trackColor={{ false: Colors.bgSecondary, true: Colors.accent }}
-                thumbColor={app.enabled ? Colors.accent : Colors.bgSecondary}
-              />
-            </View>
-          ))
-        )}
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() => navigation.navigate('AddApps')}
-        >
-          <Text style={styles.addButtonText}>+ Add more apps</Text>
-        </TouchableOpacity>
+        <Text style={styles.title}>Settings</Text>
       </View>
 
       {/* Unlock Methods Section */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>UNLOCK methods</Text>
+        <Text style={styles.sectionTitle}>UNLOCK METHODS</Text>
         <TouchableOpacity
           style={[
             styles.modeCard,
@@ -102,7 +128,7 @@ export const ConfigurationScreen = ({ navigation }: any) => {
           ]}
           onPress={() => toggleMode('temporary')}
         >
-          <View>
+          <View style={styles.modeText}>
             <Text style={styles.modeName}>Temporary Mode</Text>
             <Text style={styles.modeDesc}>5-minute breathing delay before app access.</Text>
           </View>
@@ -120,7 +146,7 @@ export const ConfigurationScreen = ({ navigation }: any) => {
           ]}
           onPress={() => toggleMode('physical')}
         >
-          <View>
+          <View style={styles.modeText}>
             <Text style={styles.modeName}>Physical Mode</Text>
             <Text style={styles.modeDesc}>Walk 10,000 steps to unlock permanently for today.</Text>
           </View>
@@ -137,7 +163,7 @@ export const ConfigurationScreen = ({ navigation }: any) => {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>SECURITY</Text>
         <View style={styles.securityRow}>
-          <View>
+          <View style={styles.securityText}>
             <Text style={styles.securityLabel}>Prevention Mode</Text>
             <Text style={styles.securityDesc}>Prevents uninstalling the app during focus blocks.</Text>
           </View>
@@ -145,20 +171,12 @@ export const ConfigurationScreen = ({ navigation }: any) => {
             value={settings.preventionMode}
             onValueChange={togglePreventionMode}
             trackColor={{ false: Colors.bgSecondary, true: Colors.accent }}
-            thumbColor={settings.preventionMode ? Colors.accent : Colors.bgSecondary}
+            thumbColor={settings.preventionMode ? Colors.accent : Colors.textTertiary}
           />
         </View>
       </View>
 
-      {/* Save Button */}
-      <TouchableOpacity
-        style={styles.saveButton}
-        onPress={() => navigation.goBack()}
-      >
-        <Text style={styles.saveButtonText}>Save Configuration</Text>
-      </TouchableOpacity>
-
-      <View style={styles.spacer16} />
+      <View style={styles.bottomSpacer} />
     </ScrollView>
   );
 };
@@ -169,24 +187,14 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bg,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
     paddingTop: 40,
   },
-  back: {
-    fontSize: 32,
-    color: Colors.text,
-  },
   title: {
-    fontSize: 20,
+    fontSize: 32,
     fontWeight: 'bold',
     color: Colors.text,
-  },
-  spacer: {
-    width: 32,
   },
   section: {
     paddingHorizontal: 16,
@@ -198,52 +206,6 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginBottom: 12,
     letterSpacing: 0.5,
-  },
-  emptyText: {
-    color: Colors.textTertiary,
-    fontSize: 14,
-    marginBottom: 16,
-  },
-  appRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.bgSecondary,
-  },
-  icon: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  iconPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: Colors.bgSecondary,
-    marginRight: 12,
-  },
-  appInfo: {
-    flex: 1,
-  },
-  appName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.text,
-  },
-  addButton: {
-    borderWidth: 1,
-    borderColor: Colors.textTertiary,
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginTop: 12,
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
   },
   modeCard: {
     backgroundColor: Colors.bgSecondary,
@@ -257,6 +219,10 @@ const styles = StyleSheet.create({
   modeCardActive: {
     borderWidth: 2,
     borderColor: Colors.accent,
+  },
+  modeText: {
+    flex: 1,
+    paddingRight: 12,
   },
   modeName: {
     fontSize: 16,
@@ -288,6 +254,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 16,
   },
+  securityText: {
+    flex: 1,
+    paddingRight: 12,
+  },
   securityLabel: {
     fontSize: 16,
     fontWeight: '600',
@@ -298,20 +268,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
   },
-  saveButton: {
-    backgroundColor: Colors.accent,
-    marginHorizontal: 16,
-    marginTop: 24,
-    paddingVertical: 16,
-    borderRadius: 24,
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    color: Colors.bg,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  spacer16: {
-    height: 16,
+  bottomSpacer: {
+    height: 24,
   },
 });

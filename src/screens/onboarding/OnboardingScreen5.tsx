@@ -5,8 +5,10 @@ import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen5 = ({ navigation }: any) => {
   const startApp = () => {
+    // Flipping onboardingComplete swaps the navigator to the main app stack
+    // (see AppNavigator's settings subscription); no explicit navigate needed —
+    // and navigate('Home') would fail here because Home isn't registered yet.
     updateSettings({ onboardingComplete: true });
-    navigation.navigate('Home');
   };
 
   return (

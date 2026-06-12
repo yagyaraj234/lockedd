@@ -2,15 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Colors } from '../colors';
 import Svg, { Circle } from 'react-native-svg';
-
-// StepCounter module stub
-const StepCounter = {
-  startListening() {},
-  stopListening() {},
-  async getTodaySteps() { return 0; },
-  async getStepGoal() { return 10000; },
-  async setStepGoal(goal: number) { return true; },
-};
+import { StepCounter } from '../../modules/step-counter/src';
 
 const CIRCLE_RADIUS = 80;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
@@ -106,11 +98,6 @@ export const UnlockProgressScreen = ({ navigation }: any) => {
             <Text style={styles.cardValue}>
               {remaining.toLocaleString()} steps remaining to unlock {goal.toLocaleString()} permanently for today.
             </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardLabel}>Health Sync</Text>
-            <Text style={styles.cardValue}>Last synced 2 minutes ago from Apple Health.</Text>
           </View>
 
           <TouchableOpacity

@@ -14,14 +14,21 @@ class AppBlockerModule : Module() {
   private val context: Context
     get() = appContext.reactContext ?: throw Exception("No React context")
 
+  // Bridge file shared with the accessibility service / BlockingActivity. Same
+  // app, so SharedPreferences are shared by appId. The service cannot read MMKV
+  // (Nitro), so the enabled blocked list + temporary-allow grants are mirrored
+  // here. Keep these literals in sync with com.yagyaraj.locked.BlockerPrefs.
+  private fun blockerPrefs() =
+    context.getSharedPreferences("locked_blocker", Context.MODE_PRIVATE)
+
   override fun definition() = ModuleDefinition {
     Name("AppBlocker")
 
-    AsyncFunction("getInstalledApps") { promise: (Any?) -> Unit ->
+    AsyncFunction("getInstalledApps") {
       try {
         val pm = context.packageManager
         val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-        val result = apps.map { app ->
+        apps.map { app ->
           val label = try {
             pm.getApplicationLabel(app).toString()
           } catch (e: Exception) {
@@ -42,24 +49,34 @@ class AppBlockerModule : Module() {
             "iconBase64" to iconBase64
           )
         }
-        promise(result)
       } catch (e: Exception) {
-        promise(emptyList<Map<String, String>>())
+        emptyList<Map<String, String>>()
       }
     }
 
-    AsyncFunction("isAccessibilityEnabled") { promise: (Any?) -> Unit ->
+    AsyncFunction("isAccessibilityEnabled") {
       try {
-        val enabled = isAccessibilityServiceEnabled()
-        promise(enabled)
+        isAccessibilityServiceEnabled()
       } catch (e: Exception) {
-        promise(false)
+        false
       }
     }
 
+    // Mirror the (already enabled-filtered) blocked package list into the bridge
+    // prefs so the accessibility service can read it.
     Function("setBlockedApps") { packageNames: List<String> ->
-      // This will be stored in MMKV from React side
-      // Native side just confirms receipt
+      blockerPrefs().edit()
+        .putStringSet("blockedPackages", packageNames.toSet())
+        .apply()
+      true
+    }
+
+    // Grant a blocked app a temporary pass until the given epoch-millis. The
+    // service skips blocking while now < allow_<pkg>.
+    Function("setTemporaryAllow") { packageName: String, untilMillis: Double ->
+      blockerPrefs().edit()
+        .putLong("allow_$packageName", untilMillis.toLong())
+        .apply()
       true
     }
   }

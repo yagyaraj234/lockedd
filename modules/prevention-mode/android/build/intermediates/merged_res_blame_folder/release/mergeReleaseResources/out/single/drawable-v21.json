@@ -1,0 +1,26 @@
+[
+    {
+        "merged": "expo.modules.preventionmode.prevention-mode-release-19:/drawable-v21/abc_btn_colored_material.xml",
+        "source": "expo.modules.preventionmode.prevention-mode-appcompat-1.6.1-14:/drawable-v21/abc_btn_colored_material.xml"
+    },
+    {
+        "merged": "expo.modules.preventionmode.prevention-mode-release-19:/drawable-v21/abc_action_bar_item_background_material.xml",
+        "source": "expo.modules.preventionmode.prevention-mode-appcompat-1.6.1-14:/drawable-v21/abc_action_bar_item_background_material.xml"
+    },
+    {
+        "merged": "expo.modules.preventionmode.prevention-mode-release-19:/drawable-v21/notification_action_background.xml",
+        "source": "expo.modules.preventionmode.prevention-mode-core-1.10.1-5:/drawable-v21/notification_action_background.xml"
+    },
+    {
+        "merged": "expo.modules.preventionmode.prevention-mode-release-19:/drawable-v21/abc_dialog_material_background.xml",
+        "source": "expo.modules.preventionmode.prevention-mode-appcompat-1.6.1-14:/drawable-v21/abc_dialog_material_background.xml"
+    },
+    {
+        "merged": "expo.modules.preventionmode.prevention-mode-release-19:/drawable-v21/abc_list_divider_material.xml",
+        "source": "expo.modules.preventionmode.prevention-mode-appcompat-1.6.1-14:/drawable-v21/abc_list_divider_material.xml"
+    },
+    {
+        "merged": "expo.modules.preventionmode.prevention-mode-release-19:/drawable-v21/abc_edit_text_material.xml",
+        "source": "expo.modules.preventionmode.prevention-mode-appcompat-1.6.1-14:/drawable-v21/abc_edit_text_material.xml"
+    }
+]

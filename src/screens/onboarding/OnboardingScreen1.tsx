@@ -1,10 +1,13 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Colors } from '../../colors';
+import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen1 = ({ navigation }: any) => {
   const goNext = () => navigation.navigate('Onboarding2');
-  const skip = () => navigation.navigate('Home');
+  // Flipping onboardingComplete swaps the navigator to the main app (tabs); a
+  // direct navigate('Home') would fail because Home isn't registered yet.
+  const skip = () => updateSettings({ onboardingComplete: true });
 
   return (
     <View style={styles.container}>

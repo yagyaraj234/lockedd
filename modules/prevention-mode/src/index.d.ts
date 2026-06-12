@@ -1,11 +1,5 @@
-export interface PreventionModeStatus {
-  enabled: boolean;
-  requestedOffAt: number;
-}
-
 export declare const PreventionMode: {
+  isActive(): Promise<boolean>;
   enable(): Promise<boolean>;
   disable(): Promise<boolean>;
-  requestDisable(): Promise<boolean>;
-  getStatus(): Promise<PreventionModeStatus>;
 };
