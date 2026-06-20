@@ -25,7 +25,9 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:android": "cd android && ./gradlew assembleRelease && cp app/build/outputs/apk/release/app-release.apk ../locked.apk && echo '✓ APK created: locked.apk' && ls -lh ../locked.apk && adb devices 2>/dev/null | grep -q 'device$' && echo '→ Device connected. Run: npm run install:android' || echo '→ No device. Copy locked.apk to phone or: adb install -r locked.apk'",
+    "install:android": "adb install -r locked.apk && echo '✓ Installed. Launch app and grant permissions:' && echo '  1. Accessibility: Settings > Accessibility > Locked > On' && echo '  2. Display over other apps: allow' && echo '  3. Add apps to block'"
   },
   "private": true
 }

@@ -30,7 +30,30 @@ export interface BlockedApp {
   enabled: boolean;
   blockType: 'timed' | 'permanent';
   blockUntil?: number;
+  // Epoch ms before which this block cannot be disabled or removed. Stamped on
+  // add / re-enable so a block can't be undone impulsively. See DISABLE_LOCK_MS.
+  disableLockUntil?: number;
 }
+
+// Minimum time a freshly added/enabled block stays un-removable (30 minutes).
+// Applies to both timed and permanent blocks.
+export const DISABLE_LOCK_MS = 30 * 60 * 1000;
+
+// Returns a copy of the app with disableLockUntil set 30 min into the future.
+// Use when adding a new block or re-enabling one so the lock rule lives in one
+// place rather than being recomputed at each call site.
+export const stampDisableLock = (app: BlockedApp): BlockedApp => ({
+  ...app,
+  disableLockUntil: Date.now() + DISABLE_LOCK_MS,
+});
+
+// Remaining lock time in ms. 0 once the 30-min window has elapsed (or never set).
+export const disableLockRemainingMs = (app: BlockedApp): number =>
+  Math.max(0, (app.disableLockUntil ?? 0) - Date.now());
+
+// True while the block is still inside its 30-min un-removable window.
+export const isDisableLocked = (app: BlockedApp): boolean =>
+  disableLockRemainingMs(app) > 0;
 
 export interface Settings {
   unlockMode: 'temporary' | 'physical';
@@ -81,11 +104,15 @@ const syncNativeBlockedApps = (apps: BlockedApp[]) => {
     AppBlocker.setBlockedApps(
       enabledApps.map((a) => ({
         packageName: a.packageName,
-        blockUntil: a.blockType === 'timed' ? a.blockUntil : null,
+        // null = permanent. Never pass undefined — Record conversion expects
+        // an explicit null for the nullable field.
+        blockUntil: a.blockType === 'timed' ? a.blockUntil ?? null : null,
       }))
     );
-  } catch {
-    // Native module unavailable (not yet rebuilt) — ignore.
+  } catch (e) {
+    // Surfaces both "native module unavailable" (old build) and type
+    // conversion failures — a silent catch here once hid a broken mirror.
+    console.error('[storage] native blocked-apps sync failed:', e);
   }
 };
 
@@ -93,8 +120,8 @@ const syncNativeTemporaryAllow = (packageName: string, allowedUntil: number) => 
   try {
     const { AppBlocker } = require('../../modules/app-blocker/src');
     AppBlocker.setTemporaryAllow(packageName, allowedUntil);
-  } catch {
-    // Native module unavailable (not yet rebuilt) — ignore.
+  } catch (e) {
+    console.error('[storage] native temporary-allow sync failed:', e);
   }
 };
 
@@ -124,6 +151,14 @@ export const cleanupExpiredBlocks = () => {
   if (filtered.length < apps.length) {
     setBlockedApps(filtered);
   }
+};
+
+// Run once at app launch: prunes expired timed blocks, then unconditionally
+// rewrites the native mirror (cleanupExpiredBlocks only syncs when something
+// was removed). Repairs installs whose mirror was never written or desynced.
+export const resyncNativeBlockedApps = () => {
+  cleanupExpiredBlocks();
+  syncNativeBlockedApps(getBlockedApps());
 };
 
 // Settings

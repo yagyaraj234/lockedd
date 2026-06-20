@@ -6,18 +6,28 @@ import {
   StyleSheet,
   ScrollView,
   Image,
-  Switch,
+  Alert,
 } from 'react-native';
 import { Colors } from '../colors';
-import { getBlockedApps, setBlockedApps } from '../store/storage';
+import {
+  getBlockedApps,
+  setBlockedApps,
+  isDisableLocked,
+  disableLockRemainingMs,
+  stampDisableLock,
+  type BlockedApp,
+} from '../store/storage';
+import { LockIcon, PlusIcon } from '../components/icons';
 
 export const BlockedAppsScreen = ({ navigation }: any) => {
-  const [blockedApps, setBlockedAppsState] = useState<any[]>([]);
-  const [tick, setTick] = useState(0);
+  const [blockedApps, setBlockedAppsState] = useState<BlockedApp[]>([]);
+  const [, setTick] = useState(0);
 
   const cleanupExpiredBlocks = () => {
     const now = Date.now();
     const apps = getBlockedApps();
+    // Still prune expired timed entries that Home created from storage, even
+    // though this screen no longer renders timed apps.
     const filtered = apps.filter((app) => {
       if (app.blockType === 'permanent') return true;
       if (app.blockType === 'timed' && app.blockUntil) {
@@ -39,10 +49,13 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
     return unsubscribe;
   }, [navigation]);
 
-  // Timer tick for countdown updates (every 60 seconds)
+  // Timer tick so the disable-lock countdown re-renders (every 60 seconds).
+  // Run only while at least one permanent app is still inside its lock window.
   useEffect(() => {
-    const timedApps = blockedApps.filter((app) => app.blockType === 'timed');
-    if (timedApps.length === 0) return;
+    const anyLocked = blockedApps.some(
+      (app) => app.blockType === 'permanent' && isDisableLocked(app)
+    );
+    if (!anyLocked) return;
 
     const interval = setInterval(() => {
       setTick((prev) => prev + 1);
@@ -52,35 +65,46 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
   }, [blockedApps]);
 
   const toggleApp = (packageName: string) => {
-    const updated = blockedApps.map((a) =>
-      a.packageName === packageName ? { ...a, enabled: !a.enabled } : a
-    );
+    const app = blockedApps.find((a) => a.packageName === packageName);
+    if (app && isDisableLocked(app)) {
+      Alert.alert(
+        'Locked',
+        `You can change this in about ${Math.ceil(
+          disableLockRemainingMs(app) / 60000
+        )} more minute(s).`
+      );
+      return;
+    }
+    const updated = blockedApps.map((a) => {
+      if (a.packageName !== packageName) return a;
+      const toggled = { ...a, enabled: !a.enabled };
+      // Re-enabling restarts the 30-min disable lock so it can't be gamed by
+      // toggling off-then-on to dodge the cooldown.
+      return toggled.enabled ? stampDisableLock(toggled) : toggled;
+    });
     setBlockedAppsState(updated);
     setBlockedApps(updated);
   };
 
   const removeApp = (packageName: string) => {
+    const app = blockedApps.find((a) => a.packageName === packageName);
+    if (app && isDisableLocked(app)) {
+      Alert.alert(
+        'Locked',
+        `You can change this in about ${Math.ceil(
+          disableLockRemainingMs(app) / 60000
+        )} more minute(s).`
+      );
+      return;
+    }
     const updated = blockedApps.filter((a) => a.packageName !== packageName);
     setBlockedAppsState(updated);
     setBlockedApps(updated);
   };
 
-  const formatTimeRemaining = (blockUntil: number) => {
-    const now = Date.now();
-    const remaining = Math.max(0, blockUntil - now);
-    if (remaining === 0) return 'Expired';
-
-    const hours = Math.floor(remaining / (60 * 60 * 1000));
-    const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m remaining`;
-    }
-    return `${minutes}m remaining`;
-  };
-
-  const permanentApps = blockedApps.filter((app) => app.blockType === 'permanent');
-  const timedApps = blockedApps.filter((app) => app.blockType === 'timed');
+  const permanentApps = blockedApps.filter(
+    (app) => app.blockType === 'permanent'
+  );
 
   return (
     <ScrollView style={styles.container}>
@@ -88,7 +112,7 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
         <Text style={styles.title}>Blocked Apps</Text>
       </View>
 
-      {blockedApps.length === 0 ? (
+      {permanentApps.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyText}>No apps blocked yet</Text>
           <Text style={styles.emptySubtext}>
@@ -96,66 +120,55 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
           </Text>
         </View>
       ) : (
-        <>
-          {permanentApps.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>PERMANENT</Text>
-              {permanentApps.map((app) => (
-                <View
-                  key={app.packageName}
-                  style={[styles.appRow, styles.permanentAppRow]}
-                >
-                  {app.iconBase64 ? (
-                    <Image
-                      source={{ uri: `data:image/png;base64,${app.iconBase64}` }}
-                      style={styles.icon}
-                    />
-                  ) : (
-                    <View style={styles.iconPlaceholder} />
-                  )}
-                  <View style={styles.appInfo}>
-                    <Text style={styles.appName}>{app.appName}</Text>
-                    <Text style={styles.permanentBadge}>🔒 Permanently Blocked</Text>
-                  </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>PERMANENT</Text>
+          {permanentApps.map((app) => {
+            const locked = isDisableLocked(app);
+            return (
+              <View
+                key={app.packageName}
+                style={[styles.appRow, styles.permanentAppRow]}
+              >
+                {app.iconBase64 ? (
+                  <Image
+                    source={{ uri: `data:image/png;base64,${app.iconBase64}` }}
+                    style={styles.icon}
+                  />
+                ) : (
+                  <View style={styles.iconPlaceholder} />
+                )}
+                <View style={styles.appInfo}>
+                  <Text style={styles.appName}>{app.appName}</Text>
+                  <Text style={styles.permanentBadge}>
+                    🔒 Permanently Blocked
+                  </Text>
                 </View>
-              ))}
-            </View>
-          )}
-
-          {timedApps.length > 0 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>TIMED</Text>
-              {timedApps.map((app) => (
-                <View key={app.packageName} style={styles.appRow}>
-                  {app.iconBase64 ? (
-                    <Image
-                      source={{ uri: `data:image/png;base64,${app.iconBase64}` }}
-                      style={styles.icon}
-                    />
-                  ) : (
-                    <View style={styles.iconPlaceholder} />
-                  )}
-                  <View style={styles.appInfo}>
-                    <Text style={styles.appName}>{app.appName}</Text>
-                    <Text style={styles.timerText}>
-                      {formatTimeRemaining(app.blockUntil)}
+                {locked ? (
+                  <View style={styles.lockBadge}>
+                    <LockIcon size={14} color={Colors.accent} />
+                    <Text style={styles.lockBadgeText}>
+                      {`Locked · ${Math.ceil(
+                        disableLockRemainingMs(app) / 60000
+                      )}m`}
                     </Text>
                   </View>
+                ) : (
                   <TouchableOpacity onPress={() => removeApp(app.packageName)}>
                     <Text style={styles.remove}>Remove</Text>
                   </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-        </>
+                )}
+              </View>
+            );
+          })}
+        </View>
       )}
 
       <TouchableOpacity
         style={styles.addButton}
-        onPress={() => navigation.navigate('AddApps')}
+        onPress={() => navigation.navigate('AddApps', { mode: 'permanent' })}
       >
-        <Text style={styles.addButtonText}>+ Add more apps</Text>
+        <PlusIcon size={18} color={Colors.accent} />
+        <Text style={styles.addButtonText}>Add more apps</Text>
       </TouchableOpacity>
 
       <View style={styles.bottomSpacer} />
@@ -244,15 +257,23 @@ const styles = StyleSheet.create({
     color: Colors.accent,
     fontWeight: '500',
   },
-  timerText: {
-    fontSize: 12,
-    color: Colors.textSecondary,
+  lockBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  lockBadgeText: {
+    fontSize: 13,
+    color: Colors.accent,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   remove: {
     fontSize: 13,
     color: Colors.textSecondary,
   },
   addButton: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: Colors.accent,
     borderRadius: 24,
@@ -265,6 +286,7 @@ const styles = StyleSheet.create({
     color: Colors.accent,
     fontSize: 16,
     fontWeight: 'bold',
+    marginLeft: 6,
   },
   bottomSpacer: {
     height: 24,

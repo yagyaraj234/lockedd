@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,14 @@ import {
   TextInput,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../colors';
-import { getBlockedApps, setBlockedApps } from '../store/storage';
+import {
+  getBlockedApps,
+  setBlockedApps,
+  stampDisableLock,
+  type BlockedApp,
+} from '../store/storage';
 import { AppBlocker, type InstalledApp } from '../../modules/app-blocker/src';
 import { BlockDurationModal } from '../components/BlockDurationModal';
 
@@ -17,98 +23,17 @@ interface AppWithSelected extends InstalledApp {
   selected: boolean;
 }
 
-export const AddAppsScreen = ({ navigation }: any) => {
-  const [apps, setApps] = useState<AppWithSelected[]>([]);
-  const [filtered, setFiltered] = useState<AppWithSelected[]>([]);
-  const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [showDurationModal, setShowDurationModal] = useState(false);
-  const [selectedAppsToBlock, setSelectedAppsToBlock] = useState<AppWithSelected[]>([]);
-
-  useEffect(() => {
-    loadApps();
-  }, []);
-
-  const loadApps = async () => {
-    try {
-      const installed = await AppBlocker.getInstalledApps();
-      const blocked = getBlockedApps();
-      const blockedPkgs = new Set(blocked.map((a) => a.packageName));
-      const withSelected: AppWithSelected[] = installed.map((app) => ({
-        ...app,
-        selected: blockedPkgs.has(app.packageName),
-      }));
-      withSelected.sort((a, b) => a.appName.localeCompare(b.appName));
-      setApps(withSelected);
-      setFiltered(withSelected);
-    } catch (e) {
-      console.error('Failed to load apps:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSearch = (text: string) => {
-    setSearch(text);
-    const lower = text.toLowerCase();
-    setFiltered(apps.filter((a) => a.appName.toLowerCase().includes(lower)));
-  };
-
-  const toggleApp = (packageName: string) => {
-    setApps((prev) =>
-      prev.map((a) =>
-        a.packageName === packageName ? { ...a, selected: !a.selected } : a
-      )
-    );
-    setFiltered((prev) =>
-      prev.map((a) =>
-        a.packageName === packageName ? { ...a, selected: !a.selected } : a
-      )
-    );
-  };
-
-  const saveAndClose = () => {
-    const selected = apps.filter((a) => a.selected);
-    if (selected.length === 0) {
-      navigation.goBack();
-      return;
-    }
-    setSelectedAppsToBlock(selected);
-    setShowDurationModal(true);
-  };
-
-  const handleDurationSelect = (durationMs: number | 'permanent') => {
-    const now = Date.now();
-    const blockUntil = durationMs === 'permanent' ? undefined : now + durationMs;
-    const blockType = durationMs === 'permanent' ? 'permanent' : 'timed';
-
-    const blockedAppsToAdd = selectedAppsToBlock.map((a) => ({
-      packageName: a.packageName,
-      appName: a.appName,
-      iconBase64: a.iconBase64,
-      enabled: true,
-      blockType: blockType as 'permanent' | 'timed',
-      blockUntil,
-    }));
-
-    const existing = getBlockedApps();
-    const merged = [
-      ...existing.filter(
-        (ea) => !blockedAppsToAdd.some((ba) => ba.packageName === ea.packageName)
-      ),
-      ...blockedAppsToAdd,
-    ];
-
-    setBlockedApps(merged);
-    setShowDurationModal(false);
-    setSelectedAppsToBlock([]);
-    navigation.goBack();
-  };
-
-  const renderItem = ({ item }: {item: AppWithSelected}) => (
+const AppRow = React.memo(
+  ({
+    item,
+    onToggle,
+  }: {
+    item: AppWithSelected;
+    onToggle: (packageName: string) => void;
+  }) => (
     <TouchableOpacity
       style={styles.appRow}
-      onPress={() => toggleApp(item.packageName)}
+      onPress={() => onToggle(item.packageName)}
     >
       {item.iconBase64 ? (
         <Image
@@ -122,26 +47,164 @@ export const AddAppsScreen = ({ navigation }: any) => {
         <Text style={styles.appName}>{item.appName}</Text>
         <Text style={styles.appPackage}>{item.packageName}</Text>
       </View>
-      <View
-        style={[
-          styles.checkbox,
-          item.selected && styles.checkboxSelected,
-        ]}
-      >
+      <View style={[styles.checkbox, item.selected && styles.checkboxSelected]}>
         {item.selected && <Text style={styles.checkmark}>✓</Text>}
       </View>
     </TouchableOpacity>
+  )
+);
+
+export const AddAppsScreen = ({ navigation, route }: any) => {
+  const mode: 'temporary' | 'permanent' = route?.params?.mode ?? 'temporary';
+  const [apps, setApps] = useState<AppWithSelected[]>([]);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [showDurationModal, setShowDurationModal] = useState(false);
+  const [selectedAppsToBlock, setSelectedAppsToBlock] = useState<AppWithSelected[]>([]);
+
+  useEffect(() => {
+    loadApps();
+  }, []);
+
+  const loadApps = async () => {
+    try {
+      const installed = await AppBlocker.getInstalledApps();
+      const byPkg = new Map(getBlockedApps().map((a) => [a.packageName, a]));
+      const withSelected: AppWithSelected[] = installed
+        // Temporary mode can't touch permanently-blocked apps — they're managed
+        // on the Blocked Apps screen. Hiding them stops a temp block from
+        // silently downgrading a permanent one to timed.
+        .filter((app) => {
+          if (mode !== 'temporary') return true;
+          return byPkg.get(app.packageName)?.blockType !== 'permanent';
+        })
+        .map((app) => {
+          // Pre-select only blocks of the SAME mode, so the checkmarks reflect
+          // what this screen actually manages (timed here, permanent there).
+          const existing = byPkg.get(app.packageName);
+          const selected =
+            mode === 'permanent'
+              ? existing?.blockType === 'permanent'
+              : existing?.blockType === 'timed';
+          return { ...app, selected: !!selected };
+        });
+      withSelected.sort((a, b) => a.appName.localeCompare(b.appName));
+      setApps(withSelected);
+    } catch (e) {
+      console.error('Failed to load apps:', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filtered = useMemo(() => {
+    const lower = search.trim().toLowerCase();
+    if (!lower) return apps;
+    return apps.filter(
+      (a) =>
+        a.appName.toLowerCase().includes(lower) ||
+        a.packageName.toLowerCase().includes(lower)
+    );
+  }, [apps, search]);
+
+  const toggleApp = useCallback((packageName: string) => {
+    setApps((prev) =>
+      prev.map((a) =>
+        a.packageName === packageName ? { ...a, selected: !a.selected } : a
+      )
+    );
+  }, []);
+
+  // Merge new blocks with existing ones (replacing any same-package entries)
+  // and persist. Shared by both the permanent and timed save paths.
+  const mergeAndSave = (blockedAppsToAdd: BlockedApp[]) => {
+    const existing = getBlockedApps();
+    const merged = [
+      ...existing.filter(
+        (ea) => !blockedAppsToAdd.some((ba) => ba.packageName === ea.packageName)
+      ),
+      ...blockedAppsToAdd,
+    ];
+    setBlockedApps(merged);
+  };
+
+  const saveAndClose = () => {
+    const selected = apps.filter((a) => a.selected);
+    if (selected.length === 0) {
+      navigation.goBack();
+      return;
+    }
+
+    if (mode === 'permanent') {
+      const blockedAppsToAdd = selected.map((a) =>
+        stampDisableLock({
+          packageName: a.packageName,
+          appName: a.appName,
+          iconBase64: a.iconBase64,
+          enabled: true,
+          blockType: 'permanent',
+          blockUntil: undefined,
+        })
+      );
+      mergeAndSave(blockedAppsToAdd);
+      navigation.goBack();
+      return;
+    }
+
+    // temporary: pick a duration via the modal
+    setSelectedAppsToBlock(selected);
+    setShowDurationModal(true);
+  };
+
+  const handleDurationSelect = (durationMs: number | 'permanent') => {
+    // Permanent blocking now lives on its own flow; this path is timed-only.
+    if (durationMs === 'permanent') return;
+
+    const blockUntil = Date.now() + durationMs;
+    // Never let a timed block overwrite an existing permanent one — permanent
+    // always wins. (The picker already hides these, but guard the write too.)
+    const permanentPkgs = new Set(
+      getBlockedApps()
+        .filter((a) => a.blockType === 'permanent')
+        .map((a) => a.packageName)
+    );
+    const blockedAppsToAdd = selectedAppsToBlock
+      .filter((a) => !permanentPkgs.has(a.packageName))
+      .map((a) =>
+        stampDisableLock({
+        packageName: a.packageName,
+        appName: a.appName,
+        iconBase64: a.iconBase64,
+        enabled: true,
+        blockType: 'timed',
+        blockUntil,
+      })
+    );
+
+    mergeAndSave(blockedAppsToAdd);
+    setShowDurationModal(false);
+    setSelectedAppsToBlock([]);
+    navigation.goBack();
+  };
+
+  const renderItem = useCallback(
+    ({ item }: { item: AppWithSelected }) => (
+      <AppRow item={item} onToggle={toggleApp} />
+    ),
+    [toggleApp]
   );
 
   return (
     <>
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Text style={styles.back}>‹</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Select Apps</Text>
-          <Text style={styles.done}>Done</Text>
+          <TouchableOpacity onPress={saveAndClose}>
+            <Text style={styles.done}>Done</Text>
+          </TouchableOpacity>
         </View>
 
         <TextInput
@@ -149,7 +212,7 @@ export const AddAppsScreen = ({ navigation }: any) => {
           placeholder="Search for an app..."
           placeholderTextColor={Colors.textTertiary}
           value={search}
-          onChangeText={handleSearch}
+          onChangeText={setSearch}
         />
 
         {loading ? (
@@ -158,17 +221,22 @@ export const AddAppsScreen = ({ navigation }: any) => {
           </View>
         ) : (
           <FlatList
+            style={{ flex: 1 }}
             data={filtered}
             renderItem={renderItem}
             keyExtractor={(item) => item.packageName}
-            scrollEnabled
+            initialNumToRender={12}
+            maxToRenderPerBatch={12}
+            windowSize={7}
+            removeClippedSubviews
+            keyboardShouldPersistTaps="handled"
           />
         )}
 
         <TouchableOpacity style={styles.cta} onPress={saveAndClose}>
           <Text style={styles.ctaText}>Add Selected Apps</Text>
         </TouchableOpacity>
-      </View>
+      </SafeAreaView>
 
       <BlockDurationModal
         visible={showDurationModal}
@@ -194,7 +262,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    paddingTop: 40,
   },
   back: {
     fontSize: 32,

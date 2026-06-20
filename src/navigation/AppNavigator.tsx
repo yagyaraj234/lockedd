@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Text } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, TransitionPresets } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Colors } from '../colors';
-import { getSettings, subscribeSettings } from '../store/storage';
+import { getSettings, resyncNativeBlockedApps, subscribeSettings } from '../store/storage';
 import { OnboardingScreen1 } from '../screens/onboarding/OnboardingScreen1';
 import { OnboardingScreen2 } from '../screens/onboarding/OnboardingScreen2';
 import { OnboardingScreen3 } from '../screens/onboarding/OnboardingScreen3';
@@ -15,12 +14,10 @@ import { BlockedAppsScreen } from '../screens/BlockedAppsScreen';
 import { AddAppsScreen } from '../screens/AddAppsScreen';
 import { ConfigurationScreen } from '../screens/ConfigurationScreen';
 import { UnlockProgressScreen } from '../screens/UnlockProgressScreen';
+import { HomeIcon, ShieldIcon, GearIcon } from '../components/icons';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
-
-const tabIcon = (glyph: string) => ({ color }: { color: string }) =>
-  <Text style={{ fontSize: 22, color }}>{glyph}</Text>;
 
 const MainTabs = () => (
   <Tab.Navigator
@@ -38,17 +35,17 @@ const MainTabs = () => (
     <Tab.Screen
       name="Home"
       component={HomeScreen}
-      options={{ tabBarIcon: tabIcon('🏠') }}
+      options={{ tabBarIcon: ({ color }) => <HomeIcon size={22} color={color} /> }}
     />
     <Tab.Screen
       name="BlockedApps"
       component={BlockedAppsScreen}
-      options={{ title: 'Blocked Apps', tabBarIcon: tabIcon('🚫') }}
+      options={{ title: 'Blocked Apps', tabBarIcon: ({ color }) => <ShieldIcon size={22} color={color} /> }}
     />
     <Tab.Screen
       name="Settings"
       component={ConfigurationScreen}
-      options={{ tabBarIcon: tabIcon('⚙') }}
+      options={{ tabBarIcon: ({ color }) => <GearIcon size={22} color={color} /> }}
     />
   </Tab.Navigator>
 );
@@ -65,6 +62,10 @@ export const AppNavigator = () => {
       }
     };
     refresh();
+    // Prune expired timed blocks and rewrite the native mirror the
+    // accessibility service reads — repairs installs whose mirror was never
+    // written (e.g. after a failed sync) without waiting for a list edit.
+    resyncNativeBlockedApps();
     // Re-read when settings change (e.g. onboarding completes) so the navigator
     // swaps from the onboarding stack to the main app stack.
     return subscribeSettings(refresh);

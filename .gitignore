@@ -38,4 +38,15 @@ yarn-error.*
 
 # generated native folders
 /ios
-/android
+
+# android/ contains hand-written native code (BlockingActivity, accessibility
+# service, manifest) — it is source, not generated. Ignore only build outputs.
+/android/build/
+/android/app/build/
+/android/.gradle/
+/android/local.properties
+/android/app/.cxx/
+
+# build artifacts
+*.apk
+modules/*/android/build/

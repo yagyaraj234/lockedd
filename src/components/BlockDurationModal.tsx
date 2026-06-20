@@ -26,7 +26,6 @@ const durations: Duration[] = [
   { label: '1 hour', value: 1 * 60 * 60 * 1000, hours: 1 },
   { label: '10 hours', value: 10 * 60 * 60 * 1000, hours: 10 },
   { label: '24 hours', value: 24 * 60 * 60 * 1000, hours: 24 },
-  { label: 'Forever', value: 'permanent' },
 ];
 
 export const BlockDurationModal = ({

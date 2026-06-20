@@ -17,6 +17,7 @@ import {
   isPreventionDisableReady,
 } from '../store/storage';
 import { PreventionMode } from '../../modules/prevention-mode/src';
+import { PermissionsList } from '../components/PermissionsList';
 
 // The Settings tab: unlock method + Prevention Mode. Blocked-app management
 // lives in its own tab (BlockedAppsScreen).
@@ -116,6 +117,13 @@ export const ConfigurationScreen = () => {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Settings</Text>
+      </View>
+
+      {/* Permissions Section — lets users grant anything they skipped during
+          onboarding (blocking is dead without accessibility + overlay). */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>PERMISSIONS</Text>
+        <PermissionsList />
       </View>
 
       {/* Unlock Methods Section */}

@@ -26,4 +26,32 @@ export const Permissions = {
   async requestNotifications(): Promise<boolean> {
     return PermissionsModule.requestNotifications();
   },
+
+  async checkAccessibility(): Promise<boolean> {
+    return PermissionsModule.checkAccessibility();
+  },
+
+  async checkOverlay(): Promise<boolean> {
+    return PermissionsModule.checkOverlay();
+  },
+
+  async checkUsageStats(): Promise<boolean> {
+    return PermissionsModule.checkUsageStats();
+  },
+
+  async checkActivityRecognition(): Promise<boolean> {
+    return PermissionsModule.checkActivityRecognition();
+  },
+
+  async checkBatteryOptimization(): Promise<boolean> {
+    return PermissionsModule.checkBatteryOptimization();
+  },
+
+  async checkNotifications(): Promise<boolean> {
+    return PermissionsModule.checkNotifications();
+  },
+
+  async openAppInfo(): Promise<boolean> {
+    return PermissionsModule.openAppInfo();
+  },
 };
