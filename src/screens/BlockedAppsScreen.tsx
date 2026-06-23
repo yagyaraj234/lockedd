@@ -8,6 +8,7 @@ import {
   Image,
   Alert,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import type { Palette } from '../colors';
 import {
@@ -22,6 +23,7 @@ import { EmptyState } from '../components/EmptyState';
 
 export const BlockedAppsScreen = ({ navigation }: any) => {
   const { colors: Colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [blockedApps, setBlockedAppsState] = useState<BlockedApp[]>([]);
   const [, setTick] = useState(0);
@@ -89,7 +91,7 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <Text style={styles.title}>Blocked Apps</Text>
       </View>
 
@@ -167,7 +169,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    paddingTop: 40,
   },
   title: {
     fontSize: 32,

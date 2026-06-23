@@ -25,6 +25,8 @@ export type Palette = {
   danger: string;
   blue: string;
   blueDark: string;
+  // Switch off-track color (visible in both themes).
+  switchTrackOff: string;
 };
 
 export const DarkColors: Palette = {
@@ -45,6 +47,7 @@ export const DarkColors: Palette = {
   danger: '#FF4747',
   blue: '#1E90FF',
   blueDark: '#1565B8',
+  switchTrackOff: '#3A3A3A',
 };
 
 // Neon #CCFF00 is unreadable as text/border on white, so light mode uses a
@@ -70,6 +73,7 @@ export const LightColors: Palette = {
   danger: '#D63030',
   blue: '#1565B8',
   blueDark: '#0E4A8A',
+  switchTrackOff: '#C4C4BE',
 };
 
 export type ThemeName = 'dark' | 'light';

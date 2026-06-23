@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import type { Palette } from '../colors';
 import { getBlockedApps, BlockedApp } from '../store/storage';
@@ -24,6 +25,7 @@ const formatTimeRemaining = (blockUntil: number) => {
 
 export const HomeScreen = ({ navigation }: any) => {
   const { colors: Colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [blockedApps, setBlockedApps] = useState<BlockedApp[]>([]);
   const [stats, setStats] = useState({ totalAttempts: 0, todayAttempts: 0 });
@@ -68,7 +70,7 @@ export const HomeScreen = ({ navigation }: any) => {
 
   return (
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <Text style={styles.title}>Locked</Text>
         <View style={styles.headerIcons}>
           <TouchableOpacity onPress={() => navigation.navigate('BlockedApps')}>
@@ -145,7 +147,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    paddingTop: 40,
   },
   title: {
     fontSize: 32,

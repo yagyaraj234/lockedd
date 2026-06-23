@@ -5,7 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Build
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -20,7 +22,6 @@ object BlockerPrefs {
   const val BLOCKED_PACKAGES = "blockedPackages"
   const val ALLOW_PREFIX = "allow_"
   const val UNTIL_PREFIX = "until_"
-  const val BLOCK_DNS_SETTINGS = "block_dns_settings"
 
   // Block-attempt stats. Counts each distinct time a blocked app was intercepted,
   // so the RN app can show "opens stopped" / "time saved" on Home. Daily counter
@@ -37,7 +38,22 @@ object BlockerPrefs {
     "com.miui.settings",
     "com.oneplus.settings",
   )
+
+  // Markers that identify the Private DNS chooser dialog specifically — NOT the
+  // Connections/Network menu row that merely links to it. View-id substrings are
+  // locale-independent (preferred); the text marker is an English-only fallback.
+  // Detection also requires an editable hostname field to be present, so we bounce
+  // only on the chooser dialog (which has the input) and never on the menu list.
+  // NOTE: these were derived for AOSP. To confirm the exact Samsung One UI ids,
+  // flip DNS_LOG=true, open the Private DNS dialog, and read the logcat dump.
+  val PRIVATE_DNS_ID_HINTS = listOf("private_dns", "privatedns")
+  val PRIVATE_DNS_TEXT_HINTS = listOf("private dns provider hostname")
 }
+
+// Flip to true to dump the Settings node tree (class + view-id + text) to logcat
+// under tag "DnsBlock" while a Settings screen is foreground. Use it once on a
+// real device to pin the Private DNS chooser's view-ids, then set back to false.
+private const val DNS_LOG = false
 
 /**
  * Watches foreground-app changes. When a blocked app (and not currently
@@ -55,6 +71,11 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   // Debounces re-triggers that fire as our own BlockingActivity comes to front
   // and changes the window list again.
   private var lastWindowsBlockAt: Long = 0L
+
+  // Epoch millis of the last GLOBAL_ACTION_BACK fired to leave the Private DNS
+  // chooser. Debounces the burst of window events the dialog emits so we send
+  // BACK once — repeated BACKs would walk the user out of Settings entirely.
+  private var lastDnsBackAt: Long = 0L
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     if (event == null) return
@@ -77,17 +98,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       return
     }
 
-    // Block the entire Settings app when DNS-settings protection is on.
-    // Checking only for a PrivateDns class name is unreliable — on most OEMs
-    // TYPE_WINDOW_STATE_CHANGED fires with a generic Activity class (SubSettings,
-    // Settings$NetworkDashboardActivity, etc.), never "PrivateDns". Block the whole
-    // Settings package so the user can't reach the Private DNS screen regardless of
-    // which Activity is used. onWindowsChanged does the same thing.
-    if (prefs.getBoolean(BlockerPrefs.BLOCK_DNS_SETTINGS, false) &&
-        pkg in BlockerPrefs.SETTINGS_PACKAGES) {
-      performGlobalAction(GLOBAL_ACTION_HOME)
-      return
-    }
+    // DNS protection is always on: if this is the Private DNS chooser, bounce out
+    // of it (BACK) and leave the user in Settings. Everything else in Settings stays
+    // reachable. onWindowsChanged runs the same check for dialog/overlay windows.
+    if (handlePrivateDnsChooser()) return
 
     val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
 
@@ -123,10 +137,13 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   // Requires canRetrieveWindowContent="true" in the accessibility config so that
   // window.root?.packageName is readable.
   private fun onWindowsChanged(prefs: SharedPreferences) {
-    val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
-    val blockDns = prefs.getBoolean(BlockerPrefs.BLOCK_DNS_SETTINGS, false)
+    // DNS protection is always on — check before the empty-list short-circuit so it
+    // runs even when no apps are blocked. Catches the chooser as a dialog/overlay.
+    if (handlePrivateDnsChooser()) return
 
-    if (blocked.isEmpty() && !blockDns) {
+    val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
+
+    if (blocked.isEmpty()) {
       if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
       return
     }
@@ -149,12 +166,6 @@ class AppBlockingAccessibilityService : AccessibilityService() {
         root.recycle()
 
         if (pkg == null || pkg == packageName) continue
-
-        if (blockDns && pkg in BlockerPrefs.SETTINGS_PACKAGES) {
-          lastWindowsBlockAt = now
-          performGlobalAction(GLOBAL_ACTION_HOME)
-          return
-        }
 
         if (blocked.contains(pkg)) {
           val blockedUntil = prefs.getLong(BlockerPrefs.UNTIL_PREFIX + pkg, 0L)
@@ -233,6 +244,78 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     } catch (e: Exception) {
       false
     }
+  }
+
+  // If the active window is a Settings app showing the Private DNS chooser, send
+  // BACK to dismiss it (the user stays in Settings) and return true. Debounced so
+  // the dialog's window-event burst fires BACK exactly once. Returns false for any
+  // other window so the caller can fall through to its normal app-block logic.
+  private fun handlePrivateDnsChooser(): Boolean {
+    val root = rootInActiveWindow ?: return false
+    val pkg = root.packageName?.toString()
+    if (pkg == null || pkg !in BlockerPrefs.SETTINGS_PACKAGES) {
+      root.recycle()
+      return false
+    }
+
+    val isChooser = try {
+      isPrivateDnsChooser(root)
+    } finally {
+      root.recycle()
+    }
+    if (!isChooser) return false
+
+    val now = System.currentTimeMillis()
+    if (now - lastDnsBackAt < 1000L) return true // BACK already in flight
+    lastDnsBackAt = now
+    performGlobalAction(GLOBAL_ACTION_BACK)
+    return true
+  }
+
+  // True when the node tree is the Private DNS chooser. The chooser is the only
+  // Settings screen that pairs a private-dns marker (view-id, locale-independent;
+  // or English text) with an editable hostname field — the menu row that links to
+  // it has the marker but no input. Requiring both avoids bouncing the menu list.
+  private fun isPrivateDnsChooser(root: AccessibilityNodeInfo): Boolean {
+    var mentionsDns = false
+    var hasEditable = false
+    var hasMarkerText = false
+
+    fun visit(node: AccessibilityNodeInfo?) {
+      if (node == null) return
+
+      val id = node.viewIdResourceName?.lowercase()
+      if (id != null && BlockerPrefs.PRIVATE_DNS_ID_HINTS.any { id.contains(it) }) {
+        mentionsDns = true
+      }
+
+      val text = (
+        (node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "")
+      ).lowercase()
+      if (text.contains("private dns") || text.contains("private_dns")) mentionsDns = true
+      if (BlockerPrefs.PRIVATE_DNS_TEXT_HINTS.any { text.contains(it) }) hasMarkerText = true
+
+      if (node.isEditable || node.className?.toString() == "android.widget.EditText") {
+        hasEditable = true
+      }
+
+      if (DNS_LOG) {
+        Log.d(
+          "DnsBlock",
+          "class=${node.className} id=${node.viewIdResourceName} " +
+            "text=${node.text} desc=${node.contentDescription}"
+        )
+      }
+
+      for (i in 0 until node.childCount) {
+        val child = node.getChild(i)
+        visit(child)
+        child?.recycle()
+      }
+    }
+
+    visit(root)
+    return hasMarkerText || (mentionsDns && hasEditable)
   }
 
   override fun onInterrupt() {

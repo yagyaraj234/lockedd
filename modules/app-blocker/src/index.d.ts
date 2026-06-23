@@ -14,7 +14,6 @@ export declare const AppBlocker: {
   getInstalledApps(): Promise<InstalledApp[]>;
   isAccessibilityEnabled(): Promise<boolean>;
   setBlockedApps(apps: BlockedAppEntry[]): boolean;
-  setProtectedSettings(blockDns: boolean): boolean;
   setPrivateDns(hostname: string): boolean;
   hasWriteSecureSettings(): boolean;
   getPrivateDns(): { mode: string; specifier: string };

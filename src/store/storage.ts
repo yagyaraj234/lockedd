@@ -31,24 +31,14 @@ export interface BlockedApp {
   blockType: 'timed' | 'permanent';
   blockUntil?: number;
   // Epoch ms before which this block cannot be disabled or removed. Stamped on
-  // add / re-enable so a block can't be undone impulsively.
+  // add so a block can't be undone impulsively.
   disableLockUntil?: number;
-  // The chosen lock duration in ms — stored so re-enable can re-apply the same
-  // window. Permanent blocks use the user-chosen duration; timed blocks use the
-  // default 30 min.
-  disableLockDurationMs?: number;
 }
 
-// Default lock for timed blocks (30 minutes). Permanent blocks use a
-// user-chosen duration supplied to stampDisableLock at add time.
 export const DISABLE_LOCK_MS = 30 * 60 * 1000;
 
-// Returns a copy of the app with disableLockUntil stamped from now.
-// durationMs defaults to DISABLE_LOCK_MS (used for timed blocks).
-// Always pass an explicit durationMs when adding permanent blocks.
 export const stampDisableLock = (app: BlockedApp, durationMs: number = DISABLE_LOCK_MS): BlockedApp => ({
   ...app,
-  disableLockDurationMs: durationMs,
   disableLockUntil: Date.now() + durationMs,
 });
 
@@ -64,8 +54,8 @@ export interface Settings {
   unlockMode: 'temporary' | 'physical';
   preventionMode: boolean;
   preventionModeOffRequestedAt: number | null;
+  preventionModeLockedUntil: number | null;
   onboardingComplete: boolean;
-  blockDnsSettings: boolean;
   theme: 'dark' | 'light';
 }
 
@@ -145,23 +135,14 @@ export const cleanupExpiredBlocks = () => {
   }
 };
 
-const syncNativeProtectedSettings = (blockDns: boolean) => {
-  try {
-    const { AppBlocker } = require('../../modules/app-blocker/src');
-    AppBlocker.setProtectedSettings(blockDns);
-  } catch (e) {
-    console.error('[storage] native protected-settings sync failed:', e);
-  }
-};
-
 // Run once at app launch: prunes expired timed blocks, then unconditionally
 // rewrites the native mirror (cleanupExpiredBlocks only syncs when something
 // was removed). Repairs installs whose mirror was never written or desynced.
+// DNS protection is always on natively (the accessibility service blocks the
+// Private DNS chooser unconditionally), so there is nothing to sync for it.
 export const resyncNativeBlockedApps = () => {
   cleanupExpiredBlocks();
   syncNativeBlockedApps(getBlockedApps());
-  const { blockDnsSettings } = getSettings();
-  syncNativeProtectedSettings(blockDnsSettings ?? false);
 };
 
 // Settings
@@ -169,13 +150,13 @@ export const getSettings = (): Settings => {
   try {
     const data = getStorage().getString('settings');
     return data
-      ? { blockDnsSettings: false, theme: 'dark', ...JSON.parse(data) }
+      ? { theme: 'dark', preventionModeLockedUntil: null, ...JSON.parse(data) }
       : {
           unlockMode: 'temporary',
           preventionMode: true,
           preventionModeOffRequestedAt: null,
+          preventionModeLockedUntil: null,
           onboardingComplete: false,
-          blockDnsSettings: false,
           theme: 'dark',
         };
   } catch {
@@ -183,8 +164,8 @@ export const getSettings = (): Settings => {
       unlockMode: 'temporary',
       preventionMode: true,
       preventionModeOffRequestedAt: null,
+      preventionModeLockedUntil: null,
       onboardingComplete: false,
-      blockDnsSettings: false,
       theme: 'dark',
     };
   }
@@ -207,9 +188,6 @@ export const subscribeSettings = (listener: SettingsListener): (() => void) => {
 export const updateSettings = (updates: Partial<Settings>) => {
   const current = getSettings();
   getStorage().set('settings', JSON.stringify({ ...current, ...updates }));
-  if ('blockDnsSettings' in updates) {
-    syncNativeProtectedSettings(updates.blockDnsSettings ?? false);
-  }
   settingsListeners.forEach((l) => l());
 };
 
@@ -237,4 +215,14 @@ export const isPreventionDisableReady = (): boolean => {
     Date.now() - preventionModeOffRequestedAt >= PREVENTION_DISABLE_DELAY_MS
   );
 };
+
+export const PREVENTION_LOCK_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+export const preventionLockRemainingMs = (): number => {
+  const { preventionModeLockedUntil } = getSettings();
+  if (preventionModeLockedUntil == null) return 0;
+  return Math.max(0, preventionModeLockedUntil - Date.now());
+};
+
+export const isPreventionLocked = (): boolean => preventionLockRemainingMs() > 0;
 

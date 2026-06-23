@@ -11,6 +11,7 @@ import {
   Modal,
   Dimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import type { Palette } from '../colors';
 import {
@@ -18,6 +19,9 @@ import {
   updateSettings,
   preventionDisableRemainingMs,
   isPreventionDisableReady,
+  PREVENTION_LOCK_MS,
+  preventionLockRemainingMs,
+  isPreventionLocked,
 } from '../store/storage';
 import { PreventionMode } from '../../modules/prevention-mode/src';
 import { StepCounter } from '../../modules/step-counter/src';
@@ -40,6 +44,7 @@ const DNS_STATUS_CONFIG: Record<Exclude<DnsStatus, 'unknown'>, { bg: string; col
 
 export const ConfigurationScreen = () => {
   const { colors: Colors, name: themeName, setTheme } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [settings, setSettingsState] = useState(getSettings());
   const [stepGoal, setStepGoalState] = useState(10000);
@@ -79,19 +84,19 @@ export const ConfigurationScreen = () => {
   const reconcilePreventionMode = async () => {
     try {
       const active = await PreventionMode.isActive();
-      setSettingsState((prev) => {
-        if (prev.preventionMode === active) return prev;
-        const next = {
-          ...prev,
-          preventionMode: active,
-          // A successful grant clears any pending disable request.
-          preventionModeOffRequestedAt: active
-            ? prev.preventionModeOffRequestedAt
-            : null,
-        };
-        updateSettings(next);
-        return next;
-      });
+      const prev = getSettings();
+      if (prev.preventionMode === active) return;
+      const turningOn = active === true && prev.preventionMode === false;
+      const next = {
+        ...prev,
+        preventionMode: active,
+        preventionModeOffRequestedAt: active ? prev.preventionModeOffRequestedAt : null,
+        preventionModeLockedUntil: turningOn
+          ? Date.now() + PREVENTION_LOCK_MS
+          : active ? prev.preventionModeLockedUntil : null,
+      };
+      updateSettings(next);
+      setSettingsState(next);
     } catch {
       // Native module unavailable (not yet rebuilt) — leave stored state as-is.
     }
@@ -118,7 +123,7 @@ export const ConfigurationScreen = () => {
       // Turning ON: cancel any pending disable request, then launch the system
       // device-admin grant. The switch only flips ON once the grant is confirmed
       // by reconcilePreventionMode() when the app returns to the foreground.
-      const cleared = { ...settings, preventionModeOffRequestedAt: null };
+      const cleared = { ...getSettings(), preventionModeOffRequestedAt: null };
       setSettingsState(cleared);
       updateSettings(cleared);
       try {
@@ -129,10 +134,17 @@ export const ConfigurationScreen = () => {
       return;
     }
 
+    // 14-day lock gate: must expire before the 12-hour cooldown can start.
+    if (isPreventionLocked()) {
+      const days = Math.ceil(preventionLockRemainingMs() / 86_400_000);
+      Alert.alert('Locked', `Prevention Mode is locked for ${days} more day${days === 1 ? '' : 's'}.`);
+      return;
+    }
+
     // Turning OFF is gated by the 12-hour cooldown.
-    const requestedAt = settings.preventionModeOffRequestedAt;
-    if (requestedAt == null) {
-      const next = { ...settings, preventionModeOffRequestedAt: Date.now() };
+    const current = getSettings();
+    if (current.preventionModeOffRequestedAt == null) {
+      const next = { ...current, preventionModeOffRequestedAt: Date.now() };
       setSettingsState(next);
       updateSettings(next);
       Alert.alert(
@@ -142,17 +154,18 @@ export const ConfigurationScreen = () => {
     } else if (isPreventionDisableReady()) {
       try {
         await PreventionMode.disable();
+        const next = {
+          ...current,
+          preventionMode: false,
+          preventionModeOffRequestedAt: null,
+          preventionModeLockedUntil: null,
+        };
+        setSettingsState(next);
+        updateSettings(next);
+        Alert.alert('Prevention Mode off', 'Uninstall protection has been removed.');
       } catch {
-        // Even if the native call fails, clear the flag so the UI isn't stuck.
+        Alert.alert('Error', 'Could not disable Prevention Mode. Try again.');
       }
-      const next = {
-        ...settings,
-        preventionMode: false,
-        preventionModeOffRequestedAt: null,
-      };
-      setSettingsState(next);
-      updateSettings(next);
-      Alert.alert('Prevention Mode off', 'Uninstall protection has been removed.');
     } else {
       const hours = Math.ceil(preventionDisableRemainingMs() / (60 * 60 * 1000));
       Alert.alert(
@@ -165,7 +178,7 @@ export const ConfigurationScreen = () => {
   return (
     <>
     <ScrollView style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
         <Text style={styles.title}>Settings</Text>
       </View>
 
@@ -189,7 +202,7 @@ export const ConfigurationScreen = () => {
           <Switch
             value={themeName === 'light'}
             onValueChange={(value) => setTheme(value ? 'light' : 'dark')}
-            trackColor={{ false: Colors.bgSecondary, true: Colors.accent }}
+            trackColor={{ false: Colors.switchTrackOff, true: Colors.accent }}
             thumbColor={themeName === 'light' ? '#FFFFFF' : Colors.textTertiary}
           />
         </View>
@@ -251,19 +264,27 @@ export const ConfigurationScreen = () => {
             <View style={styles.securityLabelRow}>
               <Text style={styles.securityLabel}>Prevention Mode</Text>
             </View>
-            <Text style={styles.securityDesc}>Prevents uninstalling the app during focus blocks.</Text>
+            <Text style={styles.securityDesc}>
+              {isPreventionLocked()
+                ? `Locked for ${Math.ceil(preventionLockRemainingMs() / 86_400_000)} more day(s).`
+                : 'Prevents uninstalling the app during focus blocks.'}
+            </Text>
           </View>
           <Switch
             value={settings.preventionMode}
             onValueChange={togglePreventionMode}
-            trackColor={{ false: Colors.bgSecondary, true: Colors.accent }}
+            disabled={isPreventionLocked()}
+            trackColor={{ false: Colors.switchTrackOff, true: Colors.accent }}
             thumbColor={settings.preventionMode ? '#FFFFFF' : Colors.textTertiary}
           />
         </View>
+        {/* DNS protection is always on (the accessibility service blocks the
+            Private DNS chooser unconditionally). No toggle — this row is a
+            read-only status indicator. */}
         <View style={[styles.securityRow, { marginTop: 12 }]}>
           <View style={styles.securityText}>
             <View style={styles.securityLabelRow}>
-              <Text style={styles.securityLabel}>Block DNS Settings</Text>
+              <Text style={styles.securityLabel}>Private DNS Lock</Text>
               {dnsStatus !== 'unknown' && (
                 <View style={[styles.dnsChip, { backgroundColor: DNS_STATUS_CONFIG[dnsStatus].bg }]}>
                   <Text style={[styles.dnsChipText, { color: DNS_STATUS_CONFIG[dnsStatus].color }]}>
@@ -272,18 +293,8 @@ export const ConfigurationScreen = () => {
                 </View>
               )}
             </View>
-            <Text style={styles.securityDesc}>Prevents changing Private DNS while active.</Text>
+            <Text style={styles.securityDesc}>Private DNS is locked to Cloudflare and can't be changed.</Text>
           </View>
-          <Switch
-            value={settings.blockDnsSettings ?? false}
-            onValueChange={(value) => {
-              const next = { ...settings, blockDnsSettings: value };
-              setSettingsState(next);
-              updateSettings({ blockDnsSettings: value });
-            }}
-            trackColor={{ false: Colors.bgSecondary, true: Colors.accent }}
-            thumbColor={(settings.blockDnsSettings ?? false) ? '#FFFFFF' : Colors.textTertiary}
-          />
         </View>
       </View>
 
@@ -330,7 +341,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    paddingTop: 40,
   },
   title: {
     fontSize: 32,
@@ -356,6 +366,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   modeCardActive: {
     borderWidth: 2,
@@ -402,6 +414,8 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
     backgroundColor: Colors.bgSecondary,
     borderRadius: 12,
     paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   securityText: {
     flex: 1,

@@ -107,15 +107,6 @@ class AppBlockerModule : Module() {
       true
     }
 
-    // Write protected-settings flags so the accessibility service can read them
-    // without the RN app being open. Currently only DNS settings blocking.
-    Function("setProtectedSettings") { blockDns: Boolean ->
-      blockerPrefs().edit()
-        .putBoolean("block_dns_settings", blockDns)
-        .apply()
-      true
-    }
-
     // Set Android Private DNS (DNS-over-TLS) to a custom hostname.
     // Uses Settings.Global — requires WRITE_SECURE_SETTINGS, which is a
     // development-level permission not auto-granted. Grant once via ADB:

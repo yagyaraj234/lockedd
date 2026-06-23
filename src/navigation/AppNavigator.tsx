@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, TransitionPresets } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import { getSettings, resyncNativeBlockedApps, subscribeSettings } from '../store/storage';
 import { OnboardingScreen1 } from '../screens/onboarding/OnboardingScreen1';
@@ -21,6 +22,7 @@ const Tab = createBottomTabNavigator();
 
 const MainTabs = () => {
   const { colors: Colors } = useTheme();
+  const insets = useSafeAreaInsets();
   return (
   <Tab.Navigator
     screenOptions={{
@@ -31,8 +33,8 @@ const MainTabs = () => {
         backgroundColor: Colors.bgSecondary,
         borderTopWidth: 1,
         borderTopColor: Colors.border,
-        height: 60,
-        paddingBottom: 8,
+        height: 60 + insets.bottom,
+        paddingBottom: 8 + insets.bottom,
         paddingTop: 6,
       },
       tabBarLabelStyle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.3 },

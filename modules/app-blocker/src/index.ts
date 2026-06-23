@@ -18,10 +18,6 @@ export const AppBlocker = {
     return AppBlockerModule.setBlockedApps(apps);
   },
 
-  setProtectedSettings(blockDns: boolean): boolean {
-    return AppBlockerModule.setProtectedSettings(blockDns);
-  },
-
   setPrivateDns(hostname: string): boolean {
     return AppBlockerModule.setPrivateDns(hostname);
   },
