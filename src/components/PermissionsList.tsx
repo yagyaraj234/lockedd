@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AppState,
   Platform,
@@ -7,8 +7,10 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
+import type { Palette } from '../colors';
 import { Permissions } from '../../modules/permissions/src';
+import { PermissionsSkeleton } from './Skeleton';
 
 interface PermissionState {
   accessibility: boolean;
@@ -38,6 +40,9 @@ const showRestrictedHint = (perms: PermissionState) =>
   !perms.accessibility;
 
 export const PermissionsList = () => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const [loading, setLoading] = useState(true);
   const [permissions, setPermissions] = useState<PermissionState>({
     accessibility: false,
     overlay: false,
@@ -81,7 +86,7 @@ export const PermissionsList = () => {
   }, []);
 
   useEffect(() => {
-    refreshStatuses();
+    refreshStatuses().finally(() => setLoading(false));
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') refreshStatuses();
     });
@@ -118,6 +123,8 @@ export const PermissionsList = () => {
       console.error('Permission request failed:', e);
     }
   };
+
+  if (loading) return <PermissionsSkeleton />;
 
   return (
     <View style={styles.permissionsList}>
@@ -169,7 +176,7 @@ export const PermissionsList = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   permissionsList: {
     gap: 12,
   },

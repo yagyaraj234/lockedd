@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Colors } from '../../colors';
+import { useTheme } from '../../theme';
+import type { Palette } from '../../colors';
 import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen2 = ({ navigation }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <View style={styles.container}>
       <View style={styles.content}>
@@ -37,7 +40,7 @@ export const OnboardingScreen2 = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

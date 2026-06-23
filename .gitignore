@@ -49,4 +49,5 @@ yarn-error.*
 
 # build artifacts
 *.apk
+*.zip
 modules/*/android/build/

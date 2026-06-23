@@ -1,8 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
+import type { Palette } from '../colors';
 import { getBlockedApps, BlockedApp } from '../store/storage';
+import { AppBlocker } from '../../modules/app-blocker/src';
 import { ShieldIcon, GearIcon, PlusIcon } from '../components/icons';
+import { EmptyState } from '../components/EmptyState';
+import { HomeMetrics } from '../components/HomeMetrics';
 
 const formatTimeRemaining = (blockUntil: number) => {
   const now = Date.now();
@@ -19,8 +23,22 @@ const formatTimeRemaining = (blockUntil: number) => {
 };
 
 export const HomeScreen = ({ navigation }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [blockedApps, setBlockedApps] = useState<BlockedApp[]>([]);
+  const [stats, setStats] = useState({ totalAttempts: 0, todayAttempts: 0 });
   const [, setTick] = useState(0);
+
+  // Block-attempt stats live in native shared prefs (written by the
+  // accessibility service). try/catch keeps an old APK without the native
+  // method from crashing Home.
+  const loadStats = () => {
+    try {
+      setStats(AppBlocker.getBlockStats());
+    } catch {
+      // Native method missing (pre-rebuild) — leave zeros.
+    }
+  };
 
   const refresh = () => {
     setBlockedApps(
@@ -28,6 +46,7 @@ export const HomeScreen = ({ navigation }: any) => {
         (a) => a.blockType === 'timed' && (a.blockUntil == null || a.blockUntil > Date.now())
       )
     );
+    loadStats();
   };
 
   useEffect(() => {
@@ -37,10 +56,12 @@ export const HomeScreen = ({ navigation }: any) => {
     return unsubscribe;
   }, [navigation]);
 
-  // Tick every 60s so countdowns update while the screen is open.
+  // Tick every 60s so countdowns update while the screen is open; also re-read
+  // stats so saved-time stays live if a block fires while Home is foregrounded.
   useEffect(() => {
     const interval = setInterval(() => {
       setTick((prev) => prev + 1);
+      loadStats();
     }, 60000);
     return () => clearInterval(interval);
   }, []);
@@ -59,15 +80,21 @@ export const HomeScreen = ({ navigation }: any) => {
         </View>
       </View>
 
+      <HomeMetrics
+        totalAttempts={stats.totalAttempts}
+        todayAttempts={stats.todayAttempts}
+      />
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>TEMPORARILY BLOCKED</Text>
         {blockedApps.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No apps blocked temporarily</Text>
-            <Text style={styles.emptySubtext}>
-              Block an app for a set time to get started
-            </Text>
-          </View>
+          <EmptyState
+            illustration="shield"
+            title="Nothing blocked yet"
+            subtitle="Block apps for a set time to keep distractions out."
+            actionLabel="Block an app"
+            onAction={() => navigation.navigate('AddApps', { mode: 'temporary' })}
+          />
         ) : (
           <View style={styles.appGrid}>
             {blockedApps.map((app) => (
@@ -84,9 +111,11 @@ export const HomeScreen = ({ navigation }: any) => {
                   {app.appName}
                 </Text>
                 {app.blockUntil != null && (
-                  <Text style={styles.timerText} numberOfLines={1}>
-                    {formatTimeRemaining(app.blockUntil)}
-                  </Text>
+                  <View style={styles.timerChip}>
+                    <Text style={styles.timerChipText} numberOfLines={1}>
+                      {formatTimeRemaining(app.blockUntil)}
+                    </Text>
+                  </View>
                 )}
               </View>
             ))}
@@ -105,7 +134,7 @@ export const HomeScreen = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -133,25 +162,11 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    marginBottom: 12,
-    letterSpacing: 0.5,
-  },
-  emptyState: {
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: Colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    marginBottom: 14,
+    letterSpacing: 1.2,
   },
   appGrid: {
     flexDirection: 'row',
@@ -184,11 +199,19 @@ const styles = StyleSheet.create({
     color: Colors.text,
     textAlign: 'center',
   },
-  timerText: {
+  timerChip: {
+    backgroundColor: Colors.accentSoft,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    marginTop: 6,
+    alignSelf: 'stretch',
+  },
+  timerChipText: {
     fontSize: 11,
-    color: Colors.textSecondary,
+    color: Colors.accent,
     textAlign: 'center',
-    marginTop: 4,
+    fontWeight: '600',
   },
   addButton: {
     flexDirection: 'row',

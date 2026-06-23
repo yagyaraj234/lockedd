@@ -1,15 +1,24 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Colors } from '../../colors';
+import { useTheme } from '../../theme';
+import type { Palette, ThemeName } from '../../colors';
 import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen5 = ({ navigation }: any) => {
+  const { colors: Colors, name: themeName, setTheme } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
   const startApp = () => {
     // Flipping onboardingComplete swaps the navigator to the main app stack
     // (see AppNavigator's settings subscription); no explicit navigate needed —
     // and navigate('Home') would fail here because Home isn't registered yet.
     updateSettings({ onboardingComplete: true });
   };
+
+  const THEMES: { key: ThemeName; label: string }[] = [
+    { key: 'dark', label: 'Dark' },
+    { key: 'light', label: 'Light' },
+  ];
 
   return (
     <View style={styles.container}>
@@ -20,6 +29,26 @@ export const OnboardingScreen5 = ({ navigation }: any) => {
         <Text style={styles.body}>
           Your focus starts now. Choose your first app to block on the next screen.
         </Text>
+
+        <Text style={styles.themeLabel}>APPEARANCE</Text>
+        <View style={styles.themeToggle}>
+          {THEMES.map((t) => {
+            const active = themeName === t.key;
+            return (
+              <TouchableOpacity
+                key={t.key}
+                style={[styles.themeOption, active && styles.themeOptionActive]}
+                onPress={() => setTheme(t.key)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.themeOptionText, active && styles.themeOptionTextActive]}>
+                  {t.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
         <View style={styles.dots}>
           {[0, 1, 2, 3, 4].map((i) => (
             <View
@@ -41,7 +70,7 @@ export const OnboardingScreen5 = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -77,7 +106,38 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.textSecondary,
     lineHeight: 24,
+    marginBottom: 32,
+  },
+  themeLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textTertiary,
+    letterSpacing: 1.2,
+    marginBottom: 12,
+  },
+  themeToggle: {
+    flexDirection: 'row',
+    backgroundColor: Colors.bgSecondary,
+    borderRadius: 12,
+    padding: 4,
     marginBottom: 40,
+  },
+  themeOption: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  themeOptionActive: {
+    backgroundColor: Colors.accent,
+  },
+  themeOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.textSecondary,
+  },
+  themeOptionTextActive: {
+    color: Colors.bg,
   },
   dots: {
     flexDirection: 'row',

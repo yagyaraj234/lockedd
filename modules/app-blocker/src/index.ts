@@ -18,7 +18,23 @@ export const AppBlocker = {
     return AppBlockerModule.setBlockedApps(apps);
   },
 
-  setTemporaryAllow(packageName: string, untilMillis: number): boolean {
-    return AppBlockerModule.setTemporaryAllow(packageName, untilMillis);
+  setProtectedSettings(blockDns: boolean): boolean {
+    return AppBlockerModule.setProtectedSettings(blockDns);
+  },
+
+  setPrivateDns(hostname: string): boolean {
+    return AppBlockerModule.setPrivateDns(hostname);
+  },
+
+  hasWriteSecureSettings(): boolean {
+    return AppBlockerModule.hasWriteSecureSettings();
+  },
+
+  getPrivateDns(): { mode: string; specifier: string } {
+    return AppBlockerModule.getPrivateDns();
+  },
+
+  getBlockStats(): { totalAttempts: number; todayAttempts: number } {
+    return AppBlockerModule.getBlockStats();
   },
 };

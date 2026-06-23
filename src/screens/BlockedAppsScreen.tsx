@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,18 +8,21 @@ import {
   Image,
   Alert,
 } from 'react-native';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
+import type { Palette } from '../colors';
 import {
   getBlockedApps,
   setBlockedApps,
   isDisableLocked,
   disableLockRemainingMs,
-  stampDisableLock,
   type BlockedApp,
 } from '../store/storage';
 import { LockIcon, PlusIcon } from '../components/icons';
+import { EmptyState } from '../components/EmptyState';
 
 export const BlockedAppsScreen = ({ navigation }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [blockedApps, setBlockedAppsState] = useState<BlockedApp[]>([]);
   const [, setTick] = useState(0);
 
@@ -64,37 +67,15 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
     return () => clearInterval(interval);
   }, [blockedApps]);
 
-  const toggleApp = (packageName: string) => {
-    const app = blockedApps.find((a) => a.packageName === packageName);
-    if (app && isDisableLocked(app)) {
-      Alert.alert(
-        'Locked',
-        `You can change this in about ${Math.ceil(
-          disableLockRemainingMs(app) / 60000
-        )} more minute(s).`
-      );
-      return;
-    }
-    const updated = blockedApps.map((a) => {
-      if (a.packageName !== packageName) return a;
-      const toggled = { ...a, enabled: !a.enabled };
-      // Re-enabling restarts the 30-min disable lock so it can't be gamed by
-      // toggling off-then-on to dodge the cooldown.
-      return toggled.enabled ? stampDisableLock(toggled) : toggled;
-    });
-    setBlockedAppsState(updated);
-    setBlockedApps(updated);
-  };
-
   const removeApp = (packageName: string) => {
     const app = blockedApps.find((a) => a.packageName === packageName);
     if (app && isDisableLocked(app)) {
-      Alert.alert(
-        'Locked',
-        `You can change this in about ${Math.ceil(
-          disableLockRemainingMs(app) / 60000
-        )} more minute(s).`
-      );
+      const ms = disableLockRemainingMs(app);
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      const timeStr = ms >= DAY_MS
+        ? `${Math.ceil(ms / DAY_MS)} day(s)`
+        : `${Math.ceil(ms / 60000)} minute(s)`;
+      Alert.alert('Locked', `You can remove this in about ${timeStr}.`);
       return;
     }
     const updated = blockedApps.filter((a) => a.packageName !== packageName);
@@ -113,17 +94,23 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
       </View>
 
       {permanentApps.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyText}>No apps blocked yet</Text>
-          <Text style={styles.emptySubtext}>
-            Add your first app to get started
-          </Text>
-        </View>
+        <EmptyState
+          illustration="lock"
+          title="No apps blocked"
+          subtitle="Add apps you want to permanently keep out of reach."
+          actionLabel="Add an app"
+          onAction={() => navigation.navigate('AddApps', { mode: 'permanent' })}
+        />
       ) : (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>PERMANENT</Text>
           {permanentApps.map((app) => {
             const locked = isDisableLocked(app);
+            const remainingMs = disableLockRemainingMs(app);
+            const DAY_MS = 24 * 60 * 60 * 1000;
+            const lockLabel = remainingMs >= DAY_MS
+              ? `Locked · ${Math.ceil(remainingMs / DAY_MS)}d`
+              : `Locked · ${Math.ceil(remainingMs / 60000)}m`;
             return (
               <View
                 key={app.packageName}
@@ -139,18 +126,14 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
                 )}
                 <View style={styles.appInfo}>
                   <Text style={styles.appName}>{app.appName}</Text>
-                  <Text style={styles.permanentBadge}>
-                    🔒 Permanently Blocked
-                  </Text>
+                  <View style={styles.permanentChip}>
+                    <Text style={styles.permanentChipText}>PERMANENT</Text>
+                  </View>
                 </View>
                 {locked ? (
                   <View style={styles.lockBadge}>
                     <LockIcon size={14} color={Colors.accent} />
-                    <Text style={styles.lockBadgeText}>
-                      {`Locked · ${Math.ceil(
-                        disableLockRemainingMs(app) / 60000
-                      )}m`}
-                    </Text>
+                    <Text style={styles.lockBadgeText}>{lockLabel}</Text>
                   </View>
                 ) : (
                   <TouchableOpacity onPress={() => removeApp(app.packageName)}>
@@ -176,7 +159,7 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -196,25 +179,11 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   sectionTitle: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: Colors.textTertiary,
-    letterSpacing: 1,
-    marginBottom: 12,
-  },
-  emptyState: {
-    paddingVertical: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: 8,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: Colors.textSecondary,
+    letterSpacing: 1.2,
+    marginBottom: 14,
   },
   appRow: {
     flexDirection: 'row',
@@ -252,10 +221,19 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: 2,
   },
-  permanentBadge: {
-    fontSize: 12,
+  permanentChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: Colors.accentSoft,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 4,
+  },
+  permanentChipText: {
+    fontSize: 10,
+    fontWeight: '700',
     color: Colors.accent,
-    fontWeight: '500',
+    letterSpacing: 0.8,
   },
   lockBadge: {
     flexDirection: 'row',

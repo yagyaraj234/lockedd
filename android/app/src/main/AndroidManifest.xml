@@ -6,6 +6,7 @@
   <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
   <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions"/>
+  <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions"/>
   <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
   <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE"/>
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
@@ -33,7 +34,7 @@
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
     </activity>
-    <activity android:name=".BlockingActivity" android:exported="false" android:theme="@android:style/Theme.NoTitleBar.Fullscreen" android:taskAffinity="" android:excludeFromRecents="true" android:launchMode="singleTop"/>
+    <activity android:name=".BlockingActivity" android:exported="false" android:theme="@android:style/Theme.NoTitleBar.Fullscreen" android:taskAffinity="" android:excludeFromRecents="true" android:launchMode="singleTop" android:resizeableActivity="false"/>
     <service android:name=".AppBlockingAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
       <intent-filter>
         <action android:name="android.accessibilityservice.AccessibilityService"/>

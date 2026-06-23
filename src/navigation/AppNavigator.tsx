@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, TransitionPresets } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
 import { getSettings, resyncNativeBlockedApps, subscribeSettings } from '../store/storage';
 import { OnboardingScreen1 } from '../screens/onboarding/OnboardingScreen1';
 import { OnboardingScreen2 } from '../screens/onboarding/OnboardingScreen2';
@@ -19,7 +19,9 @@ import { HomeIcon, ShieldIcon, GearIcon } from '../components/icons';
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
-const MainTabs = () => (
+const MainTabs = () => {
+  const { colors: Colors } = useTheme();
+  return (
   <Tab.Navigator
     screenOptions={{
       headerShown: false,
@@ -27,9 +29,13 @@ const MainTabs = () => (
       tabBarInactiveTintColor: Colors.textTertiary,
       tabBarStyle: {
         backgroundColor: Colors.bgSecondary,
-        borderTopColor: Colors.bgSecondary,
+        borderTopWidth: 1,
+        borderTopColor: Colors.border,
+        height: 60,
+        paddingBottom: 8,
+        paddingTop: 6,
       },
-      tabBarLabelStyle: { fontSize: 11 },
+      tabBarLabelStyle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.3 },
     }}
   >
     <Tab.Screen
@@ -48,9 +54,11 @@ const MainTabs = () => (
       options={{ tabBarIcon: ({ color }) => <GearIcon size={22} color={color} /> }}
     />
   </Tab.Navigator>
-);
+  );
+};
 
 export const AppNavigator = () => {
+  const { colors: Colors } = useTheme();
   const [onboardingComplete, setOnboardingComplete] = useState(false);
 
   useEffect(() => {

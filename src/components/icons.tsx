@@ -86,3 +86,27 @@ export const LockIcon = ({ size = 24, color }: IconProps) => (
     />
   </Svg>
 );
+
+export const ChevronLeftIcon = ({ size = 24, color }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M15 18l-6-6 6-6"
+      stroke={stroke(color)}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+export const SearchIcon = ({ size = 24, color }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Circle cx={11} cy={11} r={7} stroke={stroke(color)} strokeWidth={2} />
+    <Path
+      d="M20 20l-3.5-3.5"
+      stroke={stroke(color)}
+      strokeWidth={2}
+      strokeLinecap="round"
+    />
+  </Svg>
+);

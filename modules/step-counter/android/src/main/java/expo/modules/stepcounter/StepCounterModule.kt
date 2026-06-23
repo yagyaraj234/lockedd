@@ -20,16 +20,20 @@ class StepCounterModule : Module(), SensorEventListener {
 
   private var sensorManager: SensorManager? = null
   private var stepSensor: Sensor? = null
-  private var lastStepCount = 0
 
   override fun definition() = ModuleDefinition {
     Name("StepCounter")
 
     Function("startListening") {
-      sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-      stepSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
-      if (stepSensor != null) {
-        sensorManager?.registerListener(this@StepCounterModule, stepSensor, SensorManager.SENSOR_DELAY_UI)
+      val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+      val sensor = sm?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+      if (sm != null && sensor != null) {
+        // Unregister first so calling startListening() more than once doesn't
+        // stack duplicate listeners and drain battery.
+        sm.unregisterListener(this@StepCounterModule, sensor)
+        sm.registerListener(this@StepCounterModule, sensor, SensorManager.SENSOR_DELAY_UI)
+        sensorManager = sm
+        stepSensor = sensor
       }
     }
 

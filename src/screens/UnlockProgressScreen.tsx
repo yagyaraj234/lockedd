@@ -1,16 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
+import type { Palette } from '../colors';
 import Svg, { Circle } from 'react-native-svg';
 import { StepCounter } from '../../modules/step-counter/src';
+import { ProgressSkeleton } from '../components/Skeleton';
+import { ErrorState } from '../components/ErrorState';
 
 const CIRCLE_RADIUS = 80;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
 
-export const UnlockProgressScreen = ({ navigation }: any) => {
+export const UnlockProgressScreen = ({ navigation, route }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [steps, setSteps] = useState(0);
   const [goal, setGoal] = useState(10000);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -28,8 +34,10 @@ export const UnlockProgressScreen = ({ navigation }: any) => {
       const stepGoal = await StepCounter.getStepGoal();
       setSteps(todaySteps);
       setGoal(stepGoal);
+      setError(false);
     } catch (e) {
       console.error('Failed to load step data:', e);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -52,12 +60,17 @@ export const UnlockProgressScreen = ({ navigation }: any) => {
       </View>
 
       {loading ? (
-        <View style={styles.centerContent}>
-          <Text style={styles.loadingText}>Loading...</Text>
-        </View>
+        <ProgressSkeleton />
+      ) : error ? (
+        <ErrorState
+          message="Could not load step data. Make sure Activity Recognition is granted."
+          onRetry={loadData}
+        />
       ) : (
         <View style={styles.content}>
-          <Text style={styles.appLabel}>INSTAGRAM BLOCKED</Text>
+          <View style={styles.appLabelChip}>
+            <Text style={styles.appLabelText}>{(route?.params?.appName ?? 'APP') + ' BLOCKED'}</Text>
+          </View>
 
           <View style={styles.progressContainer}>
             <Svg height={280} width={280} viewBox="0 0 280 280">
@@ -102,7 +115,7 @@ export const UnlockProgressScreen = ({ navigation }: any) => {
 
           <TouchableOpacity
             style={styles.settingsButton}
-            onPress={() => {/* Navigate to settings */}}
+            onPress={() => navigation.navigate('Tabs', { screen: 'Settings' })}
           >
             <Text style={styles.settingsButtonText}>Customize Step Goal</Text>
           </TouchableOpacity>
@@ -112,7 +125,7 @@ export const UnlockProgressScreen = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -137,27 +150,25 @@ const styles = StyleSheet.create({
   spacer: {
     width: 24,
   },
-  centerContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-  },
   content: {
     flex: 1,
     paddingHorizontal: 16,
     paddingVertical: 24,
     alignItems: 'center',
   },
-  appLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
+  appLabelChip: {
+    borderWidth: 1,
+    borderColor: Colors.bgSecondary,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
     marginBottom: 24,
+  },
+  appLabelText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    letterSpacing: 0.8,
   },
   progressContainer: {
     height: 280,

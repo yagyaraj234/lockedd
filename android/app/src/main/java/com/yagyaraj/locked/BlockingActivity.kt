@@ -21,6 +21,9 @@ class BlockingActivity : Activity() {
   private lateinit var timerText: TextView
   private lateinit var breatheText: TextView
   private var timerRunning = false
+  private var isInForeground = false
+  private var breatheAnimatorX: ObjectAnimator? = null
+  private var breatheAnimatorY: ObjectAnimator? = null
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -116,26 +119,38 @@ class BlockingActivity : Activity() {
   }
 
   private fun startBreathingAnimation() {
-    val animator = ObjectAnimator.ofFloat(breatheText, "scaleX", 1f, 1.2f, 1f).apply {
+    breatheAnimatorX = ObjectAnimator.ofFloat(breatheText, "scaleX", 1f, 1.2f, 1f).apply {
       duration = 4000
       interpolator = AccelerateDecelerateInterpolator()
       repeatCount = ObjectAnimator.INFINITE
     }
-    val animatorY = ObjectAnimator.ofFloat(breatheText, "scaleY", 1f, 1.2f, 1f).apply {
+    breatheAnimatorY = ObjectAnimator.ofFloat(breatheText, "scaleY", 1f, 1.2f, 1f).apply {
       duration = 4000
       interpolator = AccelerateDecelerateInterpolator()
       repeatCount = ObjectAnimator.INFINITE
     }
-    animator.start()
-    animatorY.start()
+    breatheAnimatorX?.start()
+    breatheAnimatorY?.start()
+  }
+
+  override fun onResume() {
+    super.onResume()
+    isInForeground = true
+  }
+
+  override fun onPause() {
+    super.onPause()
+    isInForeground = false
   }
 
   private fun sendUserHome() {
-    val home = Intent(Intent.ACTION_MAIN).apply {
-      addCategory(Intent.CATEGORY_HOME)
-      flags = Intent.FLAG_ACTIVITY_NEW_TASK
+    if (isInForeground) {
+      val home = Intent(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_HOME)
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+      }
+      startActivity(home)
     }
-    startActivity(home)
     finish()
   }
 
@@ -145,6 +160,8 @@ class BlockingActivity : Activity() {
 
   override fun onDestroy() {
     timerRunning = false
+    breatheAnimatorX?.cancel()
+    breatheAnimatorY?.cancel()
     super.onDestroy()
   }
 }

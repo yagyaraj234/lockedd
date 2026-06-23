@@ -31,20 +31,25 @@ export interface BlockedApp {
   blockType: 'timed' | 'permanent';
   blockUntil?: number;
   // Epoch ms before which this block cannot be disabled or removed. Stamped on
-  // add / re-enable so a block can't be undone impulsively. See DISABLE_LOCK_MS.
+  // add / re-enable so a block can't be undone impulsively.
   disableLockUntil?: number;
+  // The chosen lock duration in ms — stored so re-enable can re-apply the same
+  // window. Permanent blocks use the user-chosen duration; timed blocks use the
+  // default 30 min.
+  disableLockDurationMs?: number;
 }
 
-// Minimum time a freshly added/enabled block stays un-removable (30 minutes).
-// Applies to both timed and permanent blocks.
+// Default lock for timed blocks (30 minutes). Permanent blocks use a
+// user-chosen duration supplied to stampDisableLock at add time.
 export const DISABLE_LOCK_MS = 30 * 60 * 1000;
 
-// Returns a copy of the app with disableLockUntil set 30 min into the future.
-// Use when adding a new block or re-enabling one so the lock rule lives in one
-// place rather than being recomputed at each call site.
-export const stampDisableLock = (app: BlockedApp): BlockedApp => ({
+// Returns a copy of the app with disableLockUntil stamped from now.
+// durationMs defaults to DISABLE_LOCK_MS (used for timed blocks).
+// Always pass an explicit durationMs when adding permanent blocks.
+export const stampDisableLock = (app: BlockedApp, durationMs: number = DISABLE_LOCK_MS): BlockedApp => ({
   ...app,
-  disableLockUntil: Date.now() + DISABLE_LOCK_MS,
+  disableLockDurationMs: durationMs,
+  disableLockUntil: Date.now() + durationMs,
 });
 
 // Remaining lock time in ms. 0 once the 30-min window has elapsed (or never set).
@@ -57,15 +62,11 @@ export const isDisableLocked = (app: BlockedApp): boolean =>
 
 export interface Settings {
   unlockMode: 'temporary' | 'physical';
-  stepGoal: number;
   preventionMode: boolean;
   preventionModeOffRequestedAt: number | null;
   onboardingComplete: boolean;
-}
-
-export interface TemporaryAllow {
-  packageName: string;
-  allowedUntil: number;
+  blockDnsSettings: boolean;
+  theme: 'dark' | 'light';
 }
 
 // Blocked apps
@@ -116,15 +117,6 @@ const syncNativeBlockedApps = (apps: BlockedApp[]) => {
   }
 };
 
-const syncNativeTemporaryAllow = (packageName: string, allowedUntil: number) => {
-  try {
-    const { AppBlocker } = require('../../modules/app-blocker/src');
-    AppBlocker.setTemporaryAllow(packageName, allowedUntil);
-  } catch (e) {
-    console.error('[storage] native temporary-allow sync failed:', e);
-  }
-};
-
 export const setBlockedApps = (apps: BlockedApp[]) => {
   // Ensure all apps have required fields with defaults
   const normalizedApps = apps.map((app) => ({
@@ -153,12 +145,23 @@ export const cleanupExpiredBlocks = () => {
   }
 };
 
+const syncNativeProtectedSettings = (blockDns: boolean) => {
+  try {
+    const { AppBlocker } = require('../../modules/app-blocker/src');
+    AppBlocker.setProtectedSettings(blockDns);
+  } catch (e) {
+    console.error('[storage] native protected-settings sync failed:', e);
+  }
+};
+
 // Run once at app launch: prunes expired timed blocks, then unconditionally
 // rewrites the native mirror (cleanupExpiredBlocks only syncs when something
 // was removed). Repairs installs whose mirror was never written or desynced.
 export const resyncNativeBlockedApps = () => {
   cleanupExpiredBlocks();
   syncNativeBlockedApps(getBlockedApps());
+  const { blockDnsSettings } = getSettings();
+  syncNativeProtectedSettings(blockDnsSettings ?? false);
 };
 
 // Settings
@@ -166,21 +169,23 @@ export const getSettings = (): Settings => {
   try {
     const data = getStorage().getString('settings');
     return data
-      ? JSON.parse(data)
+      ? { blockDnsSettings: false, theme: 'dark', ...JSON.parse(data) }
       : {
           unlockMode: 'temporary',
-          stepGoal: 10000,
           preventionMode: true,
           preventionModeOffRequestedAt: null,
           onboardingComplete: false,
+          blockDnsSettings: false,
+          theme: 'dark',
         };
   } catch {
     return {
       unlockMode: 'temporary',
-      stepGoal: 10000,
       preventionMode: true,
       preventionModeOffRequestedAt: null,
       onboardingComplete: false,
+      blockDnsSettings: false,
+      theme: 'dark',
     };
   }
 };
@@ -202,6 +207,9 @@ export const subscribeSettings = (listener: SettingsListener): (() => void) => {
 export const updateSettings = (updates: Partial<Settings>) => {
   const current = getSettings();
   getStorage().set('settings', JSON.stringify({ ...current, ...updates }));
+  if ('blockDnsSettings' in updates) {
+    syncNativeProtectedSettings(updates.blockDnsSettings ?? false);
+  }
   settingsListeners.forEach((l) => l());
 };
 
@@ -230,55 +238,3 @@ export const isPreventionDisableReady = (): boolean => {
   );
 };
 
-// Temporary allow list
-export const getTemporaryAllowList = (): TemporaryAllow[] => {
-  try {
-    const data = getStorage().getString('temporaryAllowList');
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
-};
-
-export const addTemporaryAllow = (packageName: string, durationMs: number) => {
-  const list = getTemporaryAllowList();
-  const allowedUntil = Date.now() + durationMs;
-  const existing = list.find((a) => a.packageName === packageName);
-  if (existing) {
-    existing.allowedUntil = allowedUntil;
-  } else {
-    list.push({ packageName, allowedUntil });
-  }
-  getStorage().set('temporaryAllowList', JSON.stringify(list));
-  syncNativeTemporaryAllow(packageName, allowedUntil);
-};
-
-export const isTemporarilyAllowed = (packageName: string): boolean => {
-  const list = getTemporaryAllowList();
-  const allow = list.find((a) => a.packageName === packageName);
-  if (!allow) return false;
-  const isAllowed = Date.now() < allow.allowedUntil;
-  if (!isAllowed) {
-    const updated = list.filter((a) => a.packageName !== packageName);
-    getStorage().set('temporaryAllowList', JSON.stringify(updated));
-  }
-  return isAllowed;
-};
-
-// Step data
-export const getTodaySteps = (): number => {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    const data = getStorage().getString('stepData');
-    if (!data) return 0;
-    const parsed = JSON.parse(data);
-    return parsed.date === today ? parsed.steps : 0;
-  } catch {
-    return 0;
-  }
-};
-
-export const setTodaySteps = (steps: number) => {
-  const today = new Date().toISOString().split('T')[0];
-  getStorage().set('stepData', JSON.stringify({ date: today, steps }));
-};

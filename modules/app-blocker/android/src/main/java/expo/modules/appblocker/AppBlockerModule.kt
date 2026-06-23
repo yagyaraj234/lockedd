@@ -107,14 +107,81 @@ class AppBlockerModule : Module() {
       true
     }
 
-    // Grant a blocked app a temporary pass until the given epoch-millis. The
-    // service skips blocking while now < allow_<pkg>.
-    Function("setTemporaryAllow") { packageName: String, untilMillis: Double ->
+    // Write protected-settings flags so the accessibility service can read them
+    // without the RN app being open. Currently only DNS settings blocking.
+    Function("setProtectedSettings") { blockDns: Boolean ->
       blockerPrefs().edit()
-        .putLong("allow_$packageName", untilMillis.toLong())
+        .putBoolean("block_dns_settings", blockDns)
         .apply()
       true
     }
+
+    // Set Android Private DNS (DNS-over-TLS) to a custom hostname.
+    // Uses Settings.Global — requires WRITE_SECURE_SETTINGS, which is a
+    // development-level permission not auto-granted. Grant once via ADB:
+    //   adb shell pm grant com.yagyaraj.locked android.permission.WRITE_SECURE_SETTINGS
+    // Survives app updates; cleared on uninstall. Returns false on API < 28 or if
+    // the permission hasn't been granted yet.
+    Function("setPrivateDns") { hostname: String ->
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+          val cr = context.contentResolver
+          android.provider.Settings.Global.putString(cr, "private_dns_mode", "hostname")
+          android.provider.Settings.Global.putString(cr, "private_dns_specifier", hostname)
+          true
+        } else {
+          false
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("AppBlocker", "setPrivateDns failed: ${e.javaClass.simpleName}: ${e.message}")
+        false
+      }
+    }
+
+    // Returns true when WRITE_SECURE_SETTINGS is granted (via ADB). Without it,
+    // setPrivateDns always fails silently.
+    Function("hasWriteSecureSettings") {
+      context.checkCallingOrSelfPermission("android.permission.WRITE_SECURE_SETTINGS") ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    // Reads back the current Private DNS settings so the UI can verify whether
+    // setPrivateDns actually took effect. Returns a map with "mode" and "specifier".
+    Function("getPrivateDns") {
+      try {
+        val cr = context.contentResolver
+        val mode = android.provider.Settings.Global.getString(cr, "private_dns_mode") ?: "off"
+        val specifier = android.provider.Settings.Global.getString(cr, "private_dns_specifier") ?: ""
+        mapOf("mode" to mode, "specifier" to specifier)
+      } catch (e: Exception) {
+        android.util.Log.e("AppBlocker", "getPrivateDns failed: ${e.javaClass.simpleName}: ${e.message}")
+        mapOf("mode" to "unknown", "specifier" to "")
+      }
+    }
+
+    // Block-attempt stats for the Home dashboard. The accessibility service
+    // increments these in the shared prefs on each interception (see
+    // BlockerPrefs.STATS_*). todayAttempts is gated on the stored date so a
+    // stale day reads 0 here without needing the service to write first.
+    Function("getBlockStats") {
+      try {
+        val prefs = blockerPrefs()
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+          .format(java.util.Date())
+        val total = prefs.getInt("stats_total", 0)
+        val todayAttempts =
+          if (prefs.getString("stats_today_date", "") == today) {
+            prefs.getInt("stats_today_count", 0)
+          } else {
+            0
+          }
+        mapOf("totalAttempts" to total, "todayAttempts" to todayAttempts)
+      } catch (e: Exception) {
+        android.util.Log.e("AppBlocker", "getBlockStats failed: ${e.javaClass.simpleName}: ${e.message}")
+        mapOf("totalAttempts" to 0, "todayAttempts" to 0)
+      }
+    }
+
   }
 
   private fun encodeIconToBase64(drawable: Drawable): String {

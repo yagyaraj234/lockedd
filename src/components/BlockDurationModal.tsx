@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,8 @@ import {
   StyleSheet,
   Dimensions,
 } from 'react-native';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
+import type { Palette } from '../colors';
 
 interface Duration {
   label: string;
@@ -34,6 +35,8 @@ export const BlockDurationModal = ({
   onSelect,
   onCancel,
 }: BlockDurationModalProps) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const [selectedValue, setSelectedValue] = useState<number | 'permanent' | null>(null);
 
   const handleSelect = (value: number | 'permanent') => {
@@ -98,7 +101,7 @@ export const BlockDurationModal = ({
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.7)',

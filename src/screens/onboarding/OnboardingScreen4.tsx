@@ -1,10 +1,13 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { Colors } from '../../colors';
+import { useTheme } from '../../theme';
+import type { Palette } from '../../colors';
 import { PermissionsList } from '../../components/PermissionsList';
 import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen4 = ({ navigation }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <ScrollView
       style={styles.container}
@@ -23,7 +26,7 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
       </View>
 
       <View style={styles.dots}>
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <View
             key={i}
             style={[styles.dot, i === 3 && styles.dotActive]}
@@ -46,7 +49,7 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

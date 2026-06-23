@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Colors } from '../../colors';
+import { useTheme } from '../../theme';
+import type { Palette } from '../../colors';
 import { updateSettings } from '../../store/storage';
 
 export const OnboardingScreen1 = ({ navigation }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const goNext = () => navigation.navigate('Onboarding2');
   // Flipping onboardingComplete swaps the navigator to the main app (tabs); a
   // direct navigate('Home') would fail because Home isn't registered yet.
@@ -39,7 +42,7 @@ export const OnboardingScreen1 = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,

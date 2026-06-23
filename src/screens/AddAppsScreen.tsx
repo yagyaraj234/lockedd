@@ -9,7 +9,8 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Colors } from '../colors';
+import { useTheme } from '../theme';
+import type { Palette } from '../colors';
 import {
   getBlockedApps,
   setBlockedApps,
@@ -18,6 +19,11 @@ import {
 } from '../store/storage';
 import { AppBlocker, type InstalledApp } from '../../modules/app-blocker/src';
 import { BlockDurationModal } from '../components/BlockDurationModal';
+import { LockDurationModal } from '../components/LockDurationModal';
+import { AppListSkeleton } from '../components/Skeleton';
+import { EmptyState } from '../components/EmptyState';
+import { ErrorState } from '../components/ErrorState';
+import { ChevronLeftIcon, SearchIcon } from '../components/icons';
 
 interface AppWithSelected extends InstalledApp {
   selected: boolean;
@@ -27,9 +33,11 @@ const AppRow = React.memo(
   ({
     item,
     onToggle,
+    styles,
   }: {
     item: AppWithSelected;
     onToggle: (packageName: string) => void;
+    styles: any;
   }) => (
     <TouchableOpacity
       style={styles.appRow}
@@ -55,18 +63,25 @@ const AppRow = React.memo(
 );
 
 export const AddAppsScreen = ({ navigation, route }: any) => {
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   const mode: 'temporary' | 'permanent' = route?.params?.mode ?? 'temporary';
   const [apps, setApps] = useState<AppWithSelected[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [showDurationModal, setShowDurationModal] = useState(false);
   const [selectedAppsToBlock, setSelectedAppsToBlock] = useState<AppWithSelected[]>([]);
+  const [showLockDurationModal, setShowLockDurationModal] = useState(false);
+  const [newAppsToStamp, setNewAppsToStamp] = useState<AppWithSelected[]>([]);
+  const [reSelectedBlocks, setReSelectedBlocks] = useState<BlockedApp[]>([]);
 
   useEffect(() => {
     loadApps();
   }, []);
 
   const loadApps = async () => {
+    setError(false);
     try {
       const installed = await AppBlocker.getInstalledApps();
       const byPkg = new Map(getBlockedApps().map((a) => [a.packageName, a]));
@@ -92,6 +107,7 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
       setApps(withSelected);
     } catch (e) {
       console.error('Failed to load apps:', e);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -136,24 +152,60 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
     }
 
     if (mode === 'permanent') {
-      const blockedAppsToAdd = selected.map((a) =>
-        stampDisableLock({
-          packageName: a.packageName,
-          appName: a.appName,
-          iconBase64: a.iconBase64,
-          enabled: true,
-          blockType: 'permanent',
-          blockUntil: undefined,
-        })
+      const existing = getBlockedApps();
+      const permanentByPkg = new Map(
+        existing
+          .filter((a) => a.blockType === 'permanent')
+          .map((a) => [a.packageName, a])
       );
-      mergeAndSave(blockedAppsToAdd);
-      navigation.goBack();
+
+      // Apps already permanently blocked: preserve their existing lock — do NOT
+      // re-stamp. This prevents the bypass where re-saving resets the timer.
+      const reSelected = selected
+        .filter((a) => permanentByPkg.has(a.packageName))
+        .map((a) => permanentByPkg.get(a.packageName)!);
+
+      // Genuinely new permanent blocks that need a lock duration chosen.
+      const newlyAdded = selected.filter((a) => !permanentByPkg.has(a.packageName));
+
+      if (newlyAdded.length === 0) {
+        // Only re-selections — merge with preserved locks and go back.
+        mergeAndSave(reSelected);
+        navigation.goBack();
+        return;
+      }
+
+      // New apps need a lock duration — show the picker.
+      setNewAppsToStamp(newlyAdded);
+      setReSelectedBlocks(reSelected);
+      setShowLockDurationModal(true);
       return;
     }
 
     // temporary: pick a duration via the modal
     setSelectedAppsToBlock(selected);
     setShowDurationModal(true);
+  };
+
+  const handleLockDurationSelect = (durationMs: number) => {
+    const stamped = newAppsToStamp.map((a) =>
+      stampDisableLock(
+        {
+          packageName: a.packageName,
+          appName: a.appName,
+          iconBase64: a.iconBase64,
+          enabled: true,
+          blockType: 'permanent',
+          blockUntil: undefined,
+        },
+        durationMs
+      )
+    );
+    mergeAndSave([...reSelectedBlocks, ...stamped]);
+    setShowLockDurationModal(false);
+    setNewAppsToStamp([]);
+    setReSelectedBlocks([]);
+    navigation.goBack();
   };
 
   const handleDurationSelect = (durationMs: number | 'permanent') => {
@@ -189,9 +241,9 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
 
   const renderItem = useCallback(
     ({ item }: { item: AppWithSelected }) => (
-      <AppRow item={item} onToggle={toggleApp} />
+      <AppRow item={item} onToggle={toggleApp} styles={styles} />
     ),
-    [toggleApp]
+    [toggleApp, styles]
   );
 
   return (
@@ -199,7 +251,7 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={styles.back}>‹</Text>
+            <ChevronLeftIcon size={28} color={Colors.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Select Apps</Text>
           <TouchableOpacity onPress={saveAndClose}>
@@ -207,18 +259,24 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
           </TouchableOpacity>
         </View>
 
-        <TextInput
-          style={styles.search}
-          placeholder="Search for an app..."
-          placeholderTextColor={Colors.textTertiary}
-          value={search}
-          onChangeText={setSearch}
-        />
+        <View style={styles.searchContainer}>
+          <SearchIcon size={16} color={Colors.textTertiary} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search apps..."
+            placeholderTextColor={Colors.textTertiary}
+            value={search}
+            onChangeText={setSearch}
+          />
+        </View>
 
         {loading ? (
-          <View style={styles.centerContent}>
-            <Text style={styles.loadingText}>Loading apps...</Text>
-          </View>
+          <AppListSkeleton />
+        ) : error ? (
+          <ErrorState
+            message="Could not load installed apps."
+            onRetry={loadApps}
+          />
         ) : (
           <FlatList
             style={{ flex: 1 }}
@@ -230,6 +288,13 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
             windowSize={7}
             removeClippedSubviews
             keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              <EmptyState
+                illustration="search"
+                title="No apps found"
+                subtitle={`No apps match "${search}"`}
+              />
+            }
           />
         )}
 
@@ -247,11 +312,21 @@ export const AddAppsScreen = ({ navigation, route }: any) => {
           setSelectedAppsToBlock([]);
         }}
       />
+
+      <LockDurationModal
+        visible={showLockDurationModal}
+        onSelect={handleLockDurationSelect}
+        onCancel={() => {
+          setShowLockDurationModal(false);
+          setNewAppsToStamp([]);
+          setReSelectedBlocks([]);
+        }}
+      />
     </>
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -263,10 +338,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  back: {
-    fontSize: 32,
-    color: Colors.text,
-  },
   title: {
     fontSize: 18,
     fontWeight: 'bold',
@@ -276,24 +347,23 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: Colors.accent,
     fontWeight: '600',
+    letterSpacing: 0.2,
   },
-  search: {
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginHorizontal: 16,
     marginVertical: 12,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 8,
+    borderRadius: 12,
     backgroundColor: Colors.bgSecondary,
-    color: Colors.text,
+    gap: 10,
   },
-  centerContent: {
+  searchInput: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: Colors.textSecondary,
-    fontSize: 14,
+    color: Colors.text,
+    fontSize: 15,
   },
   appRow: {
     flexDirection: 'row',

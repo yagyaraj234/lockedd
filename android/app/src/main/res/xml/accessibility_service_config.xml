@@ -1,14 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Config for AppBlockingAccessibilityService. Only typeWindowStateChanged is
-  needed for foreground-app detection; typeWindowContentChanged fires constantly
-  and would amplify the re-launch loop. We read only event.packageName, so window
-  content retrieval is not required.
+  Config for AppBlockingAccessibilityService.
+  canRetrieveWindowContent + flagRetrieveInteractiveWindows let onWindowsChanged
+  inspect window.root.packageName for floating/popup windows that may not fire
+  TYPE_WINDOW_STATE_CHANGED with the correct package name on some OEMs.
+  typeWindowContentChanged is NOT listed — it fires constantly and is not needed.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
-  android:accessibilityEventTypes="typeWindowStateChanged"
+  android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
   android:accessibilityFeedbackType="feedbackGeneric"
-  android:accessibilityFlags="flagDefault"
-  android:canRetrieveWindowContent="false"
+  android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+  android:canRetrieveWindowContent="true"
   android:notificationTimeout="100"
   android:description="@string/app_name" />
