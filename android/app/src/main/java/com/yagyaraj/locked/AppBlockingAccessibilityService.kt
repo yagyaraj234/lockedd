@@ -173,7 +173,6 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     // Debounce: when we launch BlockingActivity, the window list changes again
     // (our activity appears), which re-fires this callback. Skip for 2 s after
     // any window-initiated launch so we don't loop.
-    val now = System.currentTimeMillis()
     if (now - lastWindowsBlockAt < 2000L) {
       if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
       return
@@ -241,6 +240,11 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       putExtra(BlockingActivity.EXTRA_BLOCKED_PACKAGE, pkg)
     }
     startActivity(intent)
+  }
+
+  private fun isKeyguardActive(): Boolean {
+    val km = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+    return km?.isKeyguardLocked == true
   }
 
   // True when a split-screen divider or multiple application windows are
@@ -333,5 +337,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
   override fun onInterrupt() {
     // No-op.
+  }
+
+  override fun onDestroy() {
+    try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}
+    super.onDestroy()
   }
 }
