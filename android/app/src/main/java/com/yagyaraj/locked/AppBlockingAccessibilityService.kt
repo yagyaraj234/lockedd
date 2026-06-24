@@ -1,8 +1,10 @@
 package com.yagyaraj.locked
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
@@ -77,6 +79,21 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   // BACK once — repeated BACKs would walk the user out of Settings entirely.
   private var lastDnsBackAt: Long = 0L
 
+  private var lastUnlockAt = 0L
+
+  private val unlockReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+      if (intent.action == Intent.ACTION_USER_PRESENT) {
+        lastUnlockAt = System.currentTimeMillis()
+      }
+    }
+  }
+
+  override fun onServiceConnected() {
+    super.onServiceConnected()
+    registerReceiver(unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
+  }
+
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     if (event == null) return
 
@@ -91,10 +108,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private fun onWindowStateChanged(event: AccessibilityEvent, prefs: SharedPreferences) {
     val pkg = event.packageName?.toString() ?: return
 
-    // Our own windows (including BlockingActivity) — never block ourselves, and
-    // reset the guard so the blocked app re-triggers when reopened later.
+    // Our own windows (including BlockingActivity) — never block ourselves.
     if (pkg == packageName) {
-      lastBlocked = null
       return
     }
 
@@ -102,6 +117,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     // of it (BACK) and leave the user in Settings. Everything else in Settings stays
     // reachable. onWindowsChanged runs the same check for dialog/overlay windows.
     if (handlePrivateDnsChooser()) return
+
+    // Skip when keyguard is still up or within 500ms of unlock
+    val now = System.currentTimeMillis()
+    if (isKeyguardActive() || now - lastUnlockAt < 500L) return
 
     val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
 
@@ -148,6 +167,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       return
     }
 
+    val now = System.currentTimeMillis()
+    if (isKeyguardActive() || now - lastUnlockAt < 500L) return
+
     // Debounce: when we launch BlockingActivity, the window list changes again
     // (our activity appears), which re-fires this callback. Skip for 2 s after
     // any window-initiated launch so we don't loop.
@@ -157,33 +179,24 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       return
     }
 
-    try {
-      for (window in windows) {
-        if (window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue
-
-        val root = window.root ?: continue
-        val pkg = root.packageName?.toString()
-        root.recycle()
-
-        if (pkg == null || pkg == packageName) continue
-
-        if (blocked.contains(pkg)) {
-          val blockedUntil = prefs.getLong(BlockerPrefs.UNTIL_PREFIX + pkg, 0L)
-          if (blockedUntil > 0L && now > blockedUntil) continue
-
-          val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + pkg, 0L)
-          if (allowedUntil > now) continue
-
-          if (lastBlocked == pkg) continue
-
+    // Only check the active foreground window, not all windows. Iterating all
+    // windows caused BlockingActivity to fire when a blocked app was in the
+    // background but not actually in front of the user. Split-screen is still
+    // handled: isInSplitScreen() exits it below regardless of which app is active.
+    val root = try { rootInActiveWindow } catch (_: Exception) { null }
+    if (root != null) {
+      val pkg = root.packageName?.toString()
+      root.recycle()
+      if (pkg != null && pkg != packageName && blocked.contains(pkg)) {
+        val blockedUntil = prefs.getLong(BlockerPrefs.UNTIL_PREFIX + pkg, 0L)
+        val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + pkg, 0L)
+        if ((blockedUntil == 0L || now <= blockedUntil) && allowedUntil <= now && lastBlocked != pkg) {
           lastWindowsBlockAt = now
           lastBlocked = pkg
           launchBlockingActivity(pkg, prefs)
           return
         }
       }
-    } catch (_: Exception) {
-      // Window list may change mid-iteration; safe to ignore.
     }
 
     if (isInSplitScreen()) {

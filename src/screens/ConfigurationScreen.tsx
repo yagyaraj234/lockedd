@@ -26,21 +26,9 @@ import {
 import { PreventionMode } from '../../modules/prevention-mode/src';
 import { StepCounter } from '../../modules/step-counter/src';
 import { PermissionsList } from '../components/PermissionsList';
-import { AppBlocker } from '../../modules/app-blocker/src';
 
 const STEP_GOAL_OPTIONS = [5000, 8000, 10000, 15000, 20000];
 
-// The Settings tab: unlock method + Prevention Mode. Blocked-app management
-// lives in its own tab (BlockedAppsScreen).
-type DnsStatus = 'ok' | 'wrong' | 'no_perm' | 'unknown';
-
-// Status colors are mid-tone so they stay legible on both the near-black dark
-// bg and the off-white light bg (neon/pastel variants wash out on white).
-const DNS_STATUS_CONFIG: Record<Exclude<DnsStatus, 'unknown'>, { bg: string; color: string; label: string }> = {
-  ok:      { bg: 'rgba(22,163,74,0.14)',  color: '#16a34a', label: 'Cloudflare DNS active' },
-  wrong:   { bg: 'rgba(217,119,6,0.14)',  color: '#d97706', label: 'DNS not set' },
-  no_perm: { bg: 'rgba(220,38,38,0.14)',  color: '#dc2626', label: 'No permission' },
-};
 
 export const ConfigurationScreen = () => {
   const { colors: Colors, name: themeName, setTheme } = useTheme();
@@ -49,34 +37,17 @@ export const ConfigurationScreen = () => {
   const [settings, setSettingsState] = useState(getSettings());
   const [stepGoal, setStepGoalState] = useState(10000);
   const [showStepGoalModal, setShowStepGoalModal] = useState(false);
-  const [dnsStatus, setDnsStatus] = useState<DnsStatus>('unknown');
 
   // The stored preventionMode flag can drift from the real device-admin state
   // (e.g. the user grants/revokes admin in system settings, or cancels the grant
   // prompt). Device admin is the source of truth — reconcile on mount and every
   // time the app returns to the foreground (which is also when the grant prompt
   // launched by enable() resolves).
-  const refreshDnsStatus = () => {
-    try {
-      const hasPerm = AppBlocker.hasWriteSecureSettings();
-      if (!hasPerm) { setDnsStatus('no_perm'); return; }
-      const dns = AppBlocker.getPrivateDns();
-      setDnsStatus(
-        dns.mode === 'hostname' && dns.specifier === 'family.cloudflare-dns.com'
-          ? 'ok'
-          : 'wrong'
-      );
-    } catch {
-      setDnsStatus('unknown');
-    }
-  };
-
   useEffect(() => {
     reconcilePreventionMode();
-    refreshDnsStatus();
     StepCounter.getStepGoal().then(setStepGoalState).catch(() => {});
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') { reconcilePreventionMode(); refreshDnsStatus(); }
+      if (state === 'active') { reconcilePreventionMode(); }
     });
     return () => sub.remove();
   }, []);
@@ -278,24 +249,6 @@ export const ConfigurationScreen = () => {
             thumbColor={settings.preventionMode ? '#FFFFFF' : Colors.textTertiary}
           />
         </View>
-        {/* DNS protection is always on (the accessibility service blocks the
-            Private DNS chooser unconditionally). No toggle — this row is a
-            read-only status indicator. */}
-        <View style={[styles.securityRow, { marginTop: 12 }]}>
-          <View style={styles.securityText}>
-            <View style={styles.securityLabelRow}>
-              <Text style={styles.securityLabel}>Private DNS Lock</Text>
-              {dnsStatus !== 'unknown' && (
-                <View style={[styles.dnsChip, { backgroundColor: DNS_STATUS_CONFIG[dnsStatus].bg }]}>
-                  <Text style={[styles.dnsChipText, { color: DNS_STATUS_CONFIG[dnsStatus].color }]}>
-                    {DNS_STATUS_CONFIG[dnsStatus].label}
-                  </Text>
-                </View>
-              )}
-            </View>
-            <Text style={styles.securityDesc}>Private DNS is locked to Cloudflare and can't be changed.</Text>
-          </View>
-        </View>
       </View>
 
       <View style={styles.bottomSpacer} />
@@ -436,15 +389,6 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   securityDesc: {
     fontSize: 13,
     color: Colors.textSecondary,
-  },
-  dnsChip: {
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  dnsChipText: {
-    fontSize: 11,
-    fontWeight: '600',
   },
   bottomSpacer: {
     height: 24,
