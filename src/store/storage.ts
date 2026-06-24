@@ -30,19 +30,33 @@ export interface BlockedApp {
   enabled: boolean;
   blockType: 'timed' | 'permanent';
   blockUntil?: number;
+  // Epoch ms before which this block cannot be disabled or removed. Stamped on
+  // add so a block can't be undone impulsively.
+  disableLockUntil?: number;
 }
+
+export const DISABLE_LOCK_MS = 30 * 60 * 1000;
+
+export const stampDisableLock = (app: BlockedApp, durationMs: number = DISABLE_LOCK_MS): BlockedApp => ({
+  ...app,
+  disableLockUntil: Date.now() + durationMs,
+});
+
+// Remaining lock time in ms. 0 once the 30-min window has elapsed (or never set).
+export const disableLockRemainingMs = (app: BlockedApp): number =>
+  Math.max(0, (app.disableLockUntil ?? 0) - Date.now());
+
+// True while the block is still inside its 30-min un-removable window.
+export const isDisableLocked = (app: BlockedApp): boolean =>
+  disableLockRemainingMs(app) > 0;
 
 export interface Settings {
   unlockMode: 'temporary' | 'physical';
-  stepGoal: number;
   preventionMode: boolean;
   preventionModeOffRequestedAt: number | null;
+  preventionModeLockedUntil: number | null;
   onboardingComplete: boolean;
-}
-
-export interface TemporaryAllow {
-  packageName: string;
-  allowedUntil: number;
+  theme: 'dark' | 'light';
 }
 
 // Blocked apps
@@ -81,20 +95,15 @@ const syncNativeBlockedApps = (apps: BlockedApp[]) => {
     AppBlocker.setBlockedApps(
       enabledApps.map((a) => ({
         packageName: a.packageName,
-        blockUntil: a.blockType === 'timed' ? a.blockUntil : null,
+        // null = permanent. Never pass undefined — Record conversion expects
+        // an explicit null for the nullable field.
+        blockUntil: a.blockType === 'timed' ? a.blockUntil ?? null : null,
       }))
     );
-  } catch {
-    // Native module unavailable (not yet rebuilt) — ignore.
-  }
-};
-
-const syncNativeTemporaryAllow = (packageName: string, allowedUntil: number) => {
-  try {
-    const { AppBlocker } = require('../../modules/app-blocker/src');
-    AppBlocker.setTemporaryAllow(packageName, allowedUntil);
-  } catch {
-    // Native module unavailable (not yet rebuilt) — ignore.
+  } catch (e) {
+    // Surfaces both "native module unavailable" (old build) and type
+    // conversion failures — a silent catch here once hid a broken mirror.
+    console.error('[storage] native blocked-apps sync failed:', e);
   }
 };
 
@@ -126,26 +135,38 @@ export const cleanupExpiredBlocks = () => {
   }
 };
 
+// Run once at app launch: prunes expired timed blocks, then unconditionally
+// rewrites the native mirror (cleanupExpiredBlocks only syncs when something
+// was removed). Repairs installs whose mirror was never written or desynced.
+// DNS protection is always on natively (the accessibility service blocks the
+// Private DNS chooser unconditionally), so there is nothing to sync for it.
+export const resyncNativeBlockedApps = () => {
+  cleanupExpiredBlocks();
+  syncNativeBlockedApps(getBlockedApps());
+};
+
 // Settings
 export const getSettings = (): Settings => {
   try {
     const data = getStorage().getString('settings');
     return data
-      ? JSON.parse(data)
+      ? { theme: 'dark', preventionModeLockedUntil: null, ...JSON.parse(data) }
       : {
           unlockMode: 'temporary',
-          stepGoal: 10000,
           preventionMode: true,
           preventionModeOffRequestedAt: null,
+          preventionModeLockedUntil: null,
           onboardingComplete: false,
+          theme: 'dark',
         };
   } catch {
     return {
       unlockMode: 'temporary',
-      stepGoal: 10000,
       preventionMode: true,
       preventionModeOffRequestedAt: null,
+      preventionModeLockedUntil: null,
       onboardingComplete: false,
+      theme: 'dark',
     };
   }
 };
@@ -195,55 +216,13 @@ export const isPreventionDisableReady = (): boolean => {
   );
 };
 
-// Temporary allow list
-export const getTemporaryAllowList = (): TemporaryAllow[] => {
-  try {
-    const data = getStorage().getString('temporaryAllowList');
-    return data ? JSON.parse(data) : [];
-  } catch {
-    return [];
-  }
+export const PREVENTION_LOCK_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+export const preventionLockRemainingMs = (): number => {
+  const { preventionModeLockedUntil } = getSettings();
+  if (preventionModeLockedUntil == null) return 0;
+  return Math.max(0, preventionModeLockedUntil - Date.now());
 };
 
-export const addTemporaryAllow = (packageName: string, durationMs: number) => {
-  const list = getTemporaryAllowList();
-  const allowedUntil = Date.now() + durationMs;
-  const existing = list.find((a) => a.packageName === packageName);
-  if (existing) {
-    existing.allowedUntil = allowedUntil;
-  } else {
-    list.push({ packageName, allowedUntil });
-  }
-  getStorage().set('temporaryAllowList', JSON.stringify(list));
-  syncNativeTemporaryAllow(packageName, allowedUntil);
-};
+export const isPreventionLocked = (): boolean => preventionLockRemainingMs() > 0;
 
-export const isTemporarilyAllowed = (packageName: string): boolean => {
-  const list = getTemporaryAllowList();
-  const allow = list.find((a) => a.packageName === packageName);
-  if (!allow) return false;
-  const isAllowed = Date.now() < allow.allowedUntil;
-  if (!isAllowed) {
-    const updated = list.filter((a) => a.packageName !== packageName);
-    getStorage().set('temporaryAllowList', JSON.stringify(updated));
-  }
-  return isAllowed;
-};
-
-// Step data
-export const getTodaySteps = (): number => {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    const data = getStorage().getString('stepData');
-    if (!data) return 0;
-    const parsed = JSON.parse(data);
-    return parsed.date === today ? parsed.steps : 0;
-  } catch {
-    return 0;
-  }
-};
-
-export const setTodaySteps = (steps: number) => {
-  const today = new Date().toISOString().split('T')[0];
-  getStorage().set('stepData', JSON.stringify({ date: today, steps }));
-};

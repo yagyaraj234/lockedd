@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Config for AppBlockingAccessibilityService.
+  canRetrieveWindowContent + flagRetrieveInteractiveWindows let onWindowsChanged
+  inspect window.root.packageName for floating/popup windows that may not fire
+  TYPE_WINDOW_STATE_CHANGED with the correct package name on some OEMs.
+  flagReportViewIds exposes node viewIdResourceName so the Private DNS chooser can
+  be detected by (locale-independent) view-id rather than by translated text.
+  typeWindowContentChanged is NOT listed — it fires constantly and is not needed.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+  android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
+  android:accessibilityFeedbackType="feedbackGeneric"
+  android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows|flagReportViewIds"
+  android:canRetrieveWindowContent="true"
+  android:notificationTimeout="100"
+  android:description="@string/app_name" />

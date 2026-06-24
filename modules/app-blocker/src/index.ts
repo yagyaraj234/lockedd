@@ -1,9 +1,9 @@
 import { requireNativeModule } from 'expo-modules-core';
-import type { InstalledApp } from './index.d';
+import type { BlockedAppEntry, InstalledApp } from './index.d';
 
 const AppBlockerModule = requireNativeModule('AppBlocker');
 
-export type { InstalledApp };
+export type { BlockedAppEntry, InstalledApp };
 
 export const AppBlocker = {
   async getInstalledApps(): Promise<InstalledApp[]> {
@@ -14,11 +14,23 @@ export const AppBlocker = {
     return AppBlockerModule.isAccessibilityEnabled();
   },
 
-  setBlockedApps(packages: string[]): boolean {
-    return AppBlockerModule.setBlockedApps(packages);
+  setBlockedApps(apps: BlockedAppEntry[]): boolean {
+    return AppBlockerModule.setBlockedApps(apps);
   },
 
-  setTemporaryAllow(packageName: string, untilMillis: number): boolean {
-    return AppBlockerModule.setTemporaryAllow(packageName, untilMillis);
+  setPrivateDns(hostname: string): boolean {
+    return AppBlockerModule.setPrivateDns(hostname);
+  },
+
+  hasWriteSecureSettings(): boolean {
+    return AppBlockerModule.hasWriteSecureSettings();
+  },
+
+  getPrivateDns(): { mode: string; specifier: string } {
+    return AppBlockerModule.getPrivateDns();
+  },
+
+  getBlockStats(): { totalAttempts: number; todayAttempts: number } {
+    return AppBlockerModule.getBlockStats();
   },
 };

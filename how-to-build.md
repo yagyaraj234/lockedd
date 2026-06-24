@@ -59,7 +59,7 @@ cd android
 ./gradlew assembleRelease
 ```
 
-Output: `android/app/build/outputs/apk/release/app-release.apk` (~87 MB).
+Output: `android/app/build/outputs/apk/release/app-release.apk` (~13 MB, arm64-v8a only, R8-minified, .so libs compressed).
 
 ### Install on the phone
 
@@ -112,8 +112,13 @@ Blocking only works once Android grants permissions it won't grant automatically
 
 1. Open **Locked**, complete onboarding.
 2. **Accessibility (critical):** Settings → Accessibility → **Locked** → turn **On**. Without this, nothing is blocked.
+   > **If you had it on before:** the accessibility service config changed (content retrieval enabled for popup blocking). Android auto-disables the service when the config changes — you must toggle it off then on again.
 3. Grant **Display over other apps** (overlay).
 4. Add apps to block in the **Blocked Apps** tab.
+
+### Automatic permissions granted by `npm run install:android`
+
+- **`WRITE_SECURE_SETTINGS`** — lets the app set Cloudflare Family DNS (`family.cloudflare-dns.com`) automatically each time it opens. This is a development-level permission grantable only via ADB (it will never appear in the install dialog). `npm run install:android` runs `adb shell pm grant` for it automatically. If you install the APK manually (without ADB), DNS auto-setup silently skips.
 
 Min Android version: **7.0 (API 24)**.
 

@@ -1,66 +1,13 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
-import { Colors } from '../../colors';
-import { Permissions } from '../../../modules/permissions/src';
+import { useTheme } from '../../theme';
+import type { Palette } from '../../colors';
+import { PermissionsList } from '../../components/PermissionsList';
 import { updateSettings } from '../../store/storage';
 
-interface PermissionState {
-  accessibility: boolean;
-  overlay: boolean;
-  usageStats: boolean;
-  activityRecognition: boolean;
-  batteryOptimization: boolean;
-  notifications: boolean;
-}
-
 export const OnboardingScreen4 = ({ navigation }: any) => {
-  const [permissions, setPermissions] = useState<PermissionState>({
-    accessibility: false,
-    overlay: false,
-    usageStats: false,
-    activityRecognition: false,
-    batteryOptimization: false,
-    notifications: false,
-  });
-
-  const requestPermission = async (type: keyof PermissionState) => {
-    try {
-      let result = false;
-      switch (type) {
-        case 'accessibility':
-          result = await Permissions.requestAccessibility();
-          break;
-        case 'overlay':
-          result = await Permissions.requestOverlay();
-          break;
-        case 'usageStats':
-          result = await Permissions.requestUsageStats();
-          break;
-        case 'activityRecognition':
-          result = await Permissions.requestActivityRecognition();
-          break;
-        case 'batteryOptimization':
-          result = await Permissions.requestBatteryOptimization();
-          break;
-        case 'notifications':
-          result = await Permissions.requestNotifications();
-          break;
-      }
-      setPermissions((prev) => ({ ...prev, [type]: result }));
-    } catch (e) {
-      console.error('Permission request failed:', e);
-    }
-  };
-
-  const permissionsList = [
-    { key: 'accessibility', label: 'Accessibility', desc: 'Required for app interception' },
-    { key: 'overlay', label: 'Draw Over Apps', desc: 'Required for overlay' },
-    { key: 'usageStats', label: 'Usage Access', desc: 'Required for installed app list' },
-    { key: 'activityRecognition', label: 'Activity Recognition', desc: 'Required for step tracking' },
-    { key: 'batteryOptimization', label: 'Battery Optimization', desc: 'Keeps blocking active in background' },
-    { key: 'notifications', label: 'Notifications', desc: 'Required on Android 13+' },
-  ] as const;
-
+  const { colors: Colors } = useTheme();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
   return (
     <ScrollView
       style={styles.container}
@@ -75,34 +22,11 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
       </Text>
 
       <View style={styles.permissionsList}>
-        {permissionsList.map((perm) => (
-          <View key={perm.key} style={styles.permissionRow}>
-            <View style={styles.permissionInfo}>
-              <Text style={styles.permissionLabel}>{perm.label}</Text>
-              <Text style={styles.permissionDesc}>{perm.desc}</Text>
-            </View>
-            <TouchableOpacity
-              style={[
-                styles.allowButton,
-                permissions[perm.key] && styles.allowButtonDone,
-              ]}
-              onPress={() => requestPermission(perm.key)}
-            >
-              <Text
-                style={[
-                  styles.allowButtonText,
-                  permissions[perm.key] && styles.allowButtonTextDone,
-                ]}
-              >
-                {permissions[perm.key] ? '✓' : 'ALLOW'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ))}
+        <PermissionsList />
       </View>
 
       <View style={styles.dots}>
-        {[0, 1, 2, 3, 4, 5].map((i) => (
+        {[0, 1, 2, 3, 4].map((i) => (
           <View
             key={i}
             style={[styles.dot, i === 3 && styles.dotActive]}
@@ -125,7 +49,7 @@ export const OnboardingScreen4 = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: Palette) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -161,48 +85,7 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   permissionsList: {
-    gap: 12,
     marginBottom: 40,
-  },
-  permissionRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.bgSecondary,
-    borderRadius: 12,
-    padding: 16,
-  },
-  permissionInfo: {
-    flex: 1,
-  },
-  permissionLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: 4,
-  },
-  permissionDesc: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  allowButton: {
-    backgroundColor: Colors.bgDark,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.accent,
-  },
-  allowButtonDone: {
-    backgroundColor: Colors.accent,
-  },
-  allowButtonText: {
-    color: Colors.accent,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  allowButtonTextDone: {
-    color: Colors.bg,
   },
   dots: {
     flexDirection: 'row',
