@@ -46,6 +46,9 @@ class BlockingActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (LATENCY_LOG) {
+            android.util.Log.d("BlockLatency", "onCreate t=${System.currentTimeMillis()}")
+        }
         setContentView(
             buildLayout(),
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)

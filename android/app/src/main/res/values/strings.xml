@@ -1,3 +1,9 @@
 <resources>
   <string name="app_name">locked</string>
+  <!-- Shown on the accessibility service's detail page. Kept deliberately unique
+       so AppBlockingAccessibilityService can identify that exact page (to block
+       turning the service off while Prevention Mode is active) without matching
+       the accessibility list or other apps' pages. If you edit this, update
+       BlockerPrefs.LOCKED_A11Y_HINTS to match. -->
+  <string name="accessibility_service_description">Locked watches for blocked apps and shows the focus screen when one opens.</string>
 </resources>

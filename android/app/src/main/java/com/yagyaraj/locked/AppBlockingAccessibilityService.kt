@@ -1,10 +1,10 @@
 package com.yagyaraj.locked
 
 import android.accessibilityservice.AccessibilityService
-import android.content.BroadcastReceiver
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
 import android.util.Log
@@ -50,12 +50,51 @@ object BlockerPrefs {
   // flip DNS_LOG=true, open the Private DNS dialog, and read the logcat dump.
   val PRIVATE_DNS_ID_HINTS = listOf("private_dns", "privatedns")
   val PRIVATE_DNS_TEXT_HINTS = listOf("private dns provider hostname")
+
+  // --- Prevention-mode tamper guard markers --------------------------------
+  // Used only while device admin is active (isPreventionActive()). They identify
+  // the two Settings screens the user must not reach while Prevention Mode is on.
+  //
+  // Device Admin Apps screen: matched primarily by the Activity class name from
+  // the accessibility event (locale-independent). AOSP uses
+  // com.android.settings.deviceadmin.{DeviceAdminSettings,DeviceAdminAdd}; the
+  // "deviceadmin" substring covers both. Text hints are an English fallback for
+  // OEMs whose class name doesn't contain it. TUNE from TAMPER_LOG if it fails.
+  val DEVICE_ADMIN_CLASS_HINTS = listOf("deviceadmin")
+  val DEVICE_ADMIN_TEXT_HINTS = listOf(
+    "device admin", "device administrator", "deactivate this device admin"
+  )
+
+  // Locked accessibility detail/toggle page: matched by the unique service
+  // description (see @string/accessibility_service_description) so we hit only
+  // that page and not the accessibility list or other apps. The "turn off"
+  // phrasings catch the confirm dialog that some OEMs show on toggle-off.
+  // TUNE from TAMPER_LOG against the real device.
+  val LOCKED_A11Y_HINTS = listOf(
+    "locked watches for blocked apps",
+    "turn off locked",
+    "stop using locked",
+  )
 }
 
 // Flip to true to dump the Settings node tree (class + view-id + text) to logcat
 // under tag "DnsBlock" while a Settings screen is foreground. Use it once on a
 // real device to pin the Private DNS chooser's view-ids, then set back to false.
 private const val DNS_LOG = false
+
+// Flip to true to dump the foreground Settings node tree AND the triggering
+// Activity class name to logcat under tag "Tamper". Use it once on a real device
+// to pin the exact markers for the Device Admin Apps screen and the Locked
+// accessibility detail/toggle page, then set markers in BlockerPrefs and flip
+// this back to false. See handleSettingsLockdown().
+private const val TAMPER_LOG = false
+
+// Flip to true to log the block latency chain to logcat under tag "BlockLatency":
+// the epoch-ms when the foreground-app event was received, when startActivity was
+// called, and (from BlockingActivity) when its onCreate ran. The deltas split
+// detection time (framework → callback) from render time (callback → visible) so
+// you can see exactly where any remaining gap lives. Leave false in release.
+const val LATENCY_LOG = false
 
 /**
  * Watches foreground-app changes. When a blocked app (and not currently
@@ -79,20 +118,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   // BACK once — repeated BACKs would walk the user out of Settings entirely.
   private var lastDnsBackAt: Long = 0L
 
-  private var lastUnlockAt = 0L
-
-  private val unlockReceiver = object : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-      if (intent.action == Intent.ACTION_USER_PRESENT) {
-        lastUnlockAt = System.currentTimeMillis()
-      }
-    }
-  }
-
-  override fun onServiceConnected() {
-    super.onServiceConnected()
-    registerReceiver(unlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
-  }
+  // Epoch millis of the last GLOBAL_ACTION_BACK fired by the prevention-mode
+  // tamper guard. Same debounce rationale as lastDnsBackAt.
+  private var lastTamperBackAt: Long = 0L
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     if (event == null) return
@@ -108,6 +136,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private fun onWindowStateChanged(event: AccessibilityEvent, prefs: SharedPreferences) {
     val pkg = event.packageName?.toString() ?: return
 
+    if (LATENCY_LOG && pkg != packageName) {
+      Log.d("BlockLatency", "event pkg=$pkg t=${System.currentTimeMillis()}")
+    }
+
     // Our own windows (including BlockingActivity) — never block ourselves.
     if (pkg == packageName) {
       return
@@ -118,9 +150,18 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     // reachable. onWindowsChanged runs the same check for dialog/overlay windows.
     if (handlePrivateDnsChooser()) return
 
-    // Skip when keyguard is still up or within 500ms of unlock
-    val now = System.currentTimeMillis()
-    if (isKeyguardActive() || now - lastUnlockAt < 500L) return
+    // Prevention-mode tamper guard: while device admin is active, bounce out of the
+    // Device Admin Apps screen and the Locked accessibility detail page so the user
+    // can't dismantle Locked. event.className is the locale-independent signal for
+    // the device-admin Activity. No-op when prevention mode is off.
+    if (handleSettingsLockdown(event.className?.toString())) return
+
+    // Skip only while the device is still locked. We do NOT add a post-unlock
+    // grace window: if you unlock straight into a blocked app (it was foreground
+    // when the screen turned off), it must be blocked immediately, not left
+    // usable for the grace period. The re-block loop is broken by the lastBlocked
+    // guard below, not by a timer.
+    if (isKeyguardActive()) return
 
     val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
 
@@ -160,6 +201,11 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     // runs even when no apps are blocked. Catches the chooser as a dialog/overlay.
     if (handlePrivateDnsChooser()) return
 
+    // Tamper guard also runs here so the device-admin / Locked-accessibility pages
+    // get caught when they surface as dialog/overlay windows. No event class is
+    // available on this path, so detection is content-based only.
+    if (handleSettingsLockdown(null)) return
+
     val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
 
     if (blocked.isEmpty()) {
@@ -168,7 +214,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     }
 
     val now = System.currentTimeMillis()
-    if (isKeyguardActive() || now - lastUnlockAt < 500L) return
+    if (isKeyguardActive()) return
 
     // Debounce: when we launch BlockingActivity, the window list changes again
     // (our activity appears), which re-fires this callback. Skip for 2 s after
@@ -224,6 +270,15 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private fun launchBlockingActivity(pkg: String, prefs: SharedPreferences) {
     recordBlockAttempt(prefs)
 
+    // Background the blocked app IMMEDIATELY, before doing anything else. HOME is a
+    // system transition that takes the app out of the foreground in ~tens of ms —
+    // far faster than our activity can render. This is what actually closes the
+    // "usable window": the app stops being interactive at detection time, not when
+    // the block screen finishes drawing. Worst case (if the activity launch below
+    // loses the race) the user lands on the home screen with the app backgrounded —
+    // still blocked, just without the breathing UI. It can never leave the app usable.
+    performGlobalAction(GLOBAL_ACTION_HOME)
+
     // Exit split-screen before launching so BlockingActivity covers the full
     // screen rather than just one pane. The manifest flag resizeableActivity=false
     // is a system hint, but an explicit global action is more reliable.
@@ -235,10 +290,15 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       addFlags(
         Intent.FLAG_ACTIVITY_NEW_TASK or
           Intent.FLAG_ACTIVITY_SINGLE_TOP or
-          Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+          Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+          // No open animation: the launch slide-in is ~300-500ms during which the
+          // blocked app underneath is still visible and touchable. Popping the
+          // block screen in instantly closes that usable window.
+          Intent.FLAG_ACTIVITY_NO_ANIMATION
       )
       putExtra(BlockingActivity.EXTRA_BLOCKED_PACKAGE, pkg)
     }
+    if (LATENCY_LOG) Log.d("BlockLatency", "startActivity pkg=$pkg t=${System.currentTimeMillis()}")
     startActivity(intent)
   }
 
@@ -335,12 +395,103 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     return hasMarkerText || (mentionsDns && hasEditable)
   }
 
-  override fun onInterrupt() {
-    // No-op.
+  // True while Prevention Mode is on, i.e. our device-admin component is active.
+  // This is the single gate for the tamper guard: when prevention is disabled
+  // properly (in-app, after its cooldown), isAdminActive() goes false and every
+  // settings screen becomes reachable again — no separate flag to keep in sync.
+  private fun isPreventionActive(): Boolean {
+    return try {
+      val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
+      val admin = ComponentName(this, "expo.modules.preventionmode.LockedDeviceAdminReceiver")
+      dpm.isAdminActive(admin)
+    } catch (e: Exception) {
+      false
+    }
   }
 
-  override fun onDestroy() {
-    try { unregisterReceiver(unlockReceiver) } catch (_: Exception) {}
-    super.onDestroy()
+  // While Prevention Mode is active, bounce the user out of the two Settings
+  // screens that would let them dismantle Locked:
+  //   (a) the Device Admin Apps screen / per-admin deactivate page, and
+  //   (b) the Locked accessibility service's own detail/toggle page.
+  // The accessibility list and every other app's detail page stay reachable.
+  // Fires BACK once (debounced). Returns true when it acted so the caller skips
+  // its normal logic. eventClassName (when available) is the locale-independent
+  // signal for the device-admin Activity; otherwise detection is content-based.
+  private fun handleSettingsLockdown(eventClassName: String?): Boolean {
+    if (!isPreventionActive()) return false
+
+    val root = rootInActiveWindow ?: return false
+    val pkg = root.packageName?.toString()
+    if (pkg == null || pkg !in BlockerPrefs.SETTINGS_PACKAGES) {
+      root.recycle()
+      return false
+    }
+
+    val cls = eventClassName?.lowercase() ?: ""
+    val tamper = try {
+      if (TAMPER_LOG) {
+        Log.d("Tamper", "settings screen className=$eventClassName")
+        dumpTree(root)
+      }
+      val isDeviceAdmin =
+        BlockerPrefs.DEVICE_ADMIN_CLASS_HINTS.any { cls.contains(it) } ||
+          treeContainsAny(root, BlockerPrefs.DEVICE_ADMIN_TEXT_HINTS)
+      val isLockedA11y = treeContainsAny(root, BlockerPrefs.LOCKED_A11Y_HINTS)
+      isDeviceAdmin || isLockedA11y
+    } finally {
+      root.recycle()
+    }
+
+    if (!tamper) return false
+
+    val now = System.currentTimeMillis()
+    if (now - lastTamperBackAt < 1000L) return true // BACK already in flight
+    lastTamperBackAt = now
+    performGlobalAction(GLOBAL_ACTION_BACK)
+    return true
+  }
+
+  // True if any node's text or contentDescription (lowercased) contains any of the
+  // given hints. Walks the whole tree; recycles every child it fetches but leaves
+  // the caller-owned root for the caller to recycle.
+  private fun treeContainsAny(root: AccessibilityNodeInfo, hints: List<String>): Boolean {
+    fun visit(node: AccessibilityNodeInfo?): Boolean {
+      if (node == null) return false
+      val text = (
+        (node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "")
+      ).lowercase()
+      if (hints.any { text.contains(it) }) return true
+      for (i in 0 until node.childCount) {
+        val child = node.getChild(i)
+        val hit = visit(child)
+        child?.recycle()
+        if (hit) return true
+      }
+      return false
+    }
+    return visit(root)
+  }
+
+  // Logcat dump of the node tree for marker tuning (gated by TAMPER_LOG). Mirrors
+  // the DNS_LOG dump but under tag "Tamper". Does not recycle the root.
+  private fun dumpTree(root: AccessibilityNodeInfo) {
+    fun visit(node: AccessibilityNodeInfo?) {
+      if (node == null) return
+      Log.d(
+        "Tamper",
+        "class=${node.className} id=${node.viewIdResourceName} " +
+          "text=${node.text} desc=${node.contentDescription}"
+      )
+      for (i in 0 until node.childCount) {
+        val child = node.getChild(i)
+        visit(child)
+        child?.recycle()
+      }
+    }
+    visit(root)
+  }
+
+  override fun onInterrupt() {
+    // No-op.
   }
 }
