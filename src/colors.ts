@@ -1,88 +1,84 @@
-// Theme palettes. Both palettes expose the SAME keys so any component can be
-// rendered under either theme just by swapping the object it reads from (see
-// src/theme.tsx). `Colors` stays the default dark palette for any module-level
-// references; theme-reactive components read the active palette via useTheme().
+export type ThemeName = 'dark' | 'light';
+export type ThemePreference = 'system' | ThemeName;
 
 export type Palette = {
-  bg: string;
-  bgDark: string;
-  bgSecondary: string;
+  background: string;
+  surface: string;
+  surfaceElevated: string;
+  surfacePressed: string;
+  label: string;
+  labelSecondary: string;
+  labelTertiary: string;
+  separator: string;
   accent: string;
-  accentDark: string;
-  // Soft accent tint used for chip/badge backgrounds.
-  accentSoft: string;
-  text: string;
-  textSecondary: string;
-  textTertiary: string;
-  // Hairline divider / subtle border.
-  border: string;
-  // Empty-state illustration fills/strokes (ghost shapes).
-  illustrationBg: string;
-  illustrationLine: string;
-  illustrationLineSoft: string;
-  // Soft danger tint for the error illustration fill.
-  dangerSoft: string;
+  accentMuted: string;
+  onAccent: string;
   danger: string;
-  blue: string;
-  blueDark: string;
-  // Switch off-track color (visible in both themes).
+  dangerMuted: string;
+  scrim: string;
+  skeleton: string;
   switchTrackOff: string;
+  illustration: string;
+  illustrationLine: string;
 };
 
 export const DarkColors: Palette = {
-  bg: '#0D0D0D',
-  bgDark: '#000000',
-  bgSecondary: '#1A1A1A',
-  accent: '#CCFF00',
-  accentDark: '#B3E600',
-  accentSoft: 'rgba(204,255,0,0.1)',
-  text: '#FFFFFF',
-  textSecondary: '#999999',
-  textTertiary: '#666666',
-  border: 'rgba(255,255,255,0.06)',
-  illustrationBg: '#151515',
-  illustrationLine: '#383838',
-  illustrationLineSoft: '#444444',
-  dangerSoft: '#1A0606',
-  danger: '#FF4747',
-  blue: '#1E90FF',
-  blueDark: '#1565B8',
-  switchTrackOff: '#3A3A3A',
+  background: '#0B0C0A',
+  surface: '#161813',
+  surfaceElevated: '#20231C',
+  surfacePressed: '#292D23',
+  label: '#F5F7F0',
+  labelSecondary: '#A8ADA0',
+  labelTertiary: '#74796E',
+  separator: 'rgba(255,255,255,0.08)',
+  accent: '#B7D95B',
+  accentMuted: 'rgba(183,217,91,0.14)',
+  onAccent: '#12150B',
+  danger: '#FF6B66',
+  dangerMuted: 'rgba(255,107,102,0.12)',
+  scrim: 'rgba(0,0,0,0.58)',
+  skeleton: '#292D23',
+  switchTrackOff: '#40443C',
+  illustration: '#1D201A',
+  illustrationLine: '#4C5147',
 };
 
-// Neon #CCFF00 is unreadable as text/border on white, so light mode uses a
-// darker green for those roles. The "accent fill + Colors.bg text" pattern used
-// across the app auto-flips because bg flips with the theme.
 export const LightColors: Palette = {
-  // bg (warm light gray) and bgSecondary (white cards) are kept ~6% apart so
-  // borderless cards stay visible against the page.
-  bg: '#EAEAE4',
-  bgDark: '#FFFFFF',
-  bgSecondary: '#FFFFFF',
-  accent: '#4D6B00',
-  accentDark: '#3D5500',
-  accentSoft: 'rgba(77,107,0,0.12)',
-  text: '#0D0D0D',
-  textSecondary: '#5C5C5C',
-  textTertiary: '#8A8A8A',
-  border: 'rgba(0,0,0,0.10)',
-  illustrationBg: '#FFFFFF',
-  illustrationLine: '#C4C4BE',
-  illustrationLineSoft: '#D2D2CC',
-  dangerSoft: 'rgba(214,48,48,0.1)',
-  danger: '#D63030',
-  blue: '#1565B8',
-  blueDark: '#0E4A8A',
-  switchTrackOff: '#C4C4BE',
+  background: '#F2F3EE',
+  surface: '#FFFFFF',
+  surfaceElevated: '#FFFFFF',
+  surfacePressed: '#E8EAE3',
+  label: '#171914',
+  labelSecondary: '#5F645A',
+  labelTertiary: '#898E84',
+  separator: 'rgba(23,25,20,0.10)',
+  accent: '#668400',
+  accentMuted: 'rgba(102,132,0,0.12)',
+  onAccent: '#FFFFFF',
+  danger: '#C83F3A',
+  dangerMuted: 'rgba(200,63,58,0.10)',
+  scrim: 'rgba(0,0,0,0.34)',
+  skeleton: '#E2E5DC',
+  switchTrackOff: '#C8CCC3',
+  illustration: '#FFFFFF',
+  illustrationLine: '#B9BEB4',
 };
-
-export type ThemeName = 'dark' | 'light';
 
 export const Palettes: Record<ThemeName, Palette> = {
   dark: DarkColors,
   light: LightColors,
 };
 
-// Default static export (dark) — used by module-level fallbacks that aren't
-// inside a React component (e.g. icon default stroke).
+export const Spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const;
+export const Radius = { sm: 10, md: 14, lg: 20, pill: 999 } as const;
+export const Type = {
+  largeTitle: { fontSize: 34, lineHeight: 40, fontWeight: '700' as const, letterSpacing: -0.7 },
+  title: { fontSize: 22, lineHeight: 28, fontWeight: '700' as const, letterSpacing: -0.2 },
+  body: { fontSize: 17, lineHeight: 23, fontWeight: '400' as const },
+  bodyStrong: { fontSize: 17, lineHeight: 23, fontWeight: '600' as const },
+  footnote: { fontSize: 13, lineHeight: 18, fontWeight: '400' as const },
+  footnoteStrong: { fontSize: 13, lineHeight: 18, fontWeight: '600' as const },
+} as const;
+export const Motion = { quick: 120, standard: 220, spring: { stiffness: 360, damping: 38, mass: 1 } } as const;
+
 export const Colors = DarkColors;

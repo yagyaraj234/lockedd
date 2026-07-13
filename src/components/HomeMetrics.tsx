@@ -1,184 +1,104 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo, useRef } from 'react';
+import { Animated, Easing, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
-import { useTheme } from '../theme';
 import type { Palette } from '../colors';
+import { Radius, Spacing, Type } from '../colors';
+import { useAccessibilityPreferences } from '../hooks/useAccessibilityPreferences';
+import { useTheme } from '../theme';
 
-// Each intercepted open is treated as an avoided ~18-min session — an estimate,
-// labelled "est." in the UI. Daily ring fills toward DAILY_SAVED_GOAL_MIN.
 const MINUTES_SAVED_PER_BLOCK = 18;
 const DAILY_SAVED_GOAL_MIN = 60;
+const RADIUS = 48;
+const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
+const AnimatedCircle = Animated.createAnimatedComponent(Circle as any);
 
-const RING_RADIUS = 70;
-const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
-
-const formatMinutes = (min: number): string => {
-  if (min <= 0) return '0m';
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  return `${m}m`;
+const formatMinutes = (minutes: number) => {
+  if (minutes <= 0) return '0m';
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return hours > 0 ? `${hours}h${rest ? ` ${rest}m` : ''}` : `${rest}m`;
 };
 
-interface HomeMetricsProps {
-  totalAttempts: number;
-  todayAttempts: number;
-}
+export const HomeMetrics = ({ totalAttempts, todayAttempts }: { totalAttempts: number; todayAttempts: number }) => {
+  const { colors } = useTheme();
+  const { width } = useWindowDimensions();
+  const { reduceMotion } = useAccessibilityPreferences();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const progress = Math.min((todayAttempts * MINUTES_SAVED_PER_BLOCK) / DAILY_SAVED_GOAL_MIN, 1);
+  const dashOffset = useRef(new Animated.Value(CIRCUMFERENCE)).current;
 
-export const HomeMetrics = ({ totalAttempts, todayAttempts }: HomeMetricsProps) => {
-  const { colors: Colors } = useTheme();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  useEffect(() => {
+    const next = CIRCUMFERENCE - progress * CIRCUMFERENCE;
+    if (reduceMotion) {
+      dashOffset.setValue(next);
+      return;
+    }
+    Animated.timing(dashOffset, {
+      toValue: next,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [progress, reduceMotion]);
 
-  const todaySavedMin = todayAttempts * MINUTES_SAVED_PER_BLOCK;
-  const totalSavedMin = totalAttempts * MINUTES_SAVED_PER_BLOCK;
-  const progress = Math.min(todaySavedMin / DAILY_SAVED_GOAL_MIN, 1);
-  const offset = RING_CIRCUMFERENCE - progress * RING_CIRCUMFERENCE;
+  const todaySaved = todayAttempts * MINUTES_SAVED_PER_BLOCK;
+  const totalSaved = totalAttempts * MINUTES_SAVED_PER_BLOCK;
+  const wide = width >= 600;
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>OVERVIEW</Text>
-
-      {totalAttempts === 0 ? (
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No opens stopped yet</Text>
-          <Text style={styles.emptyBody}>
-            Block an app — every time Locked stops you from opening it, your saved
-            time shows up here.
-          </Text>
+    <View style={[styles.surface, wide && styles.surfaceWide]}>
+      <View style={styles.ring} accessibilityLabel={`${formatMinutes(todaySaved)} estimated time saved today`}>
+        <Svg width={124} height={124} viewBox="0 0 124 124">
+          <Circle cx={62} cy={62} r={RADIUS} stroke={colors.surfacePressed} strokeWidth={10} fill="none" />
+          <AnimatedCircle
+            cx={62}
+            cy={62}
+            r={RADIUS}
+            stroke={colors.accent}
+            strokeWidth={10}
+            fill="none"
+            strokeDasharray={CIRCUMFERENCE}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            rotation={-90}
+            origin="62, 62"
+          />
+        </Svg>
+        <View style={styles.ringCopy}>
+          <Text style={styles.ringValue}>{formatMinutes(todaySaved)}</Text>
+          <Text style={styles.ringLabel}>saved today</Text>
         </View>
-      ) : (
-        <>
-          <View style={styles.ringWrap}>
-            <Svg height={180} width={180} viewBox="0 0 180 180">
-              <Circle
-                cx="90"
-                cy="90"
-                r={RING_RADIUS}
-                stroke={Colors.bgSecondary}
-                strokeWidth="12"
-                fill="none"
-              />
-              <Circle
-                cx="90"
-                cy="90"
-                r={RING_RADIUS}
-                stroke={Colors.accent}
-                strokeWidth="12"
-                fill="none"
-                strokeDasharray={RING_CIRCUMFERENCE}
-                strokeDashoffset={offset}
-                strokeLinecap="round"
-                rotation="-90"
-                origin="90, 90"
-              />
-            </Svg>
-            <View style={styles.ringCenter}>
-              <Text style={styles.ringValue}>{formatMinutes(todaySavedMin)}</Text>
-              <Text style={styles.ringCaption}>saved today</Text>
-            </View>
-          </View>
+      </View>
 
-          <View style={styles.cardRow}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{todayAttempts}</Text>
-              <Text style={styles.statLabel}>Opens stopped{'\n'}today</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{totalAttempts}</Text>
-              <Text style={styles.statLabel}>Opens stopped{'\n'}all time</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>{formatMinutes(totalSavedMin)}</Text>
-              <Text style={styles.statLabel}>Time saved{'\n'}all time</Text>
-            </View>
-          </View>
-          <Text style={styles.estNote}>Time saved is an estimate (~18m per stopped open).</Text>
-        </>
-      )}
+      <View style={styles.stats}>
+        <Text style={styles.heading}>{totalAttempts === 0 ? 'Ready when you are' : 'Your focus today'}</Text>
+        <Text style={styles.description}>
+          {totalAttempts === 0
+            ? 'Stopped opens and estimated time saved will appear here.'
+            : `${todayAttempts} open${todayAttempts === 1 ? '' : 's'} stopped today · ${totalAttempts} all time`}
+        </Text>
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>Estimated all-time time saved</Text>
+          <Text style={styles.totalValue}>{formatMinutes(totalSaved)}</Text>
+        </View>
+        <Text style={styles.note}>Estimate based on 18 minutes per stopped open.</Text>
+      </View>
     </View>
   );
 };
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  section: {
-    paddingHorizontal: 16,
-    marginTop: 24,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    marginBottom: 14,
-    letterSpacing: 1.2,
-  },
-  emptyCard: {
-    backgroundColor: Colors.bgSecondary,
-    borderRadius: 12,
-    padding: 20,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: Colors.text,
-    marginBottom: 6,
-  },
-  emptyBody: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-    lineHeight: 19,
-  },
-  ringWrap: {
-    height: 180,
-    width: 180,
-    alignSelf: 'center',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
-    position: 'relative',
-  },
-  ringCenter: {
-    position: 'absolute',
-    alignItems: 'center',
-  },
-  ringValue: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: Colors.text,
-  },
-  ringCaption: {
-    fontSize: 11,
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
-    marginTop: 2,
-  },
-  cardRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: Colors.bgSecondary,
-    borderRadius: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 10,
-    alignItems: 'center',
-  },
-  statValue: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: Colors.accent,
-    marginBottom: 6,
-  },
-  statLabel: {
-    fontSize: 11,
-    color: Colors.textSecondary,
-    textAlign: 'center',
-    lineHeight: 15,
-  },
-  estNote: {
-    fontSize: 11,
-    color: Colors.textTertiary,
-    textAlign: 'center',
-    marginTop: 12,
-  },
+const makeStyles = (colors: Palette) => StyleSheet.create({
+  surface: { backgroundColor: colors.surface, borderRadius: Radius.lg, padding: Spacing.xl, alignItems: 'center', gap: Spacing.lg },
+  surfaceWide: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.xxl },
+  ring: { width: 124, height: 124, alignItems: 'center', justifyContent: 'center' },
+  ringCopy: { position: 'absolute', alignItems: 'center' },
+  ringValue: { ...Type.title, color: colors.label },
+  ringLabel: { fontSize: 11, lineHeight: 15, color: colors.labelSecondary },
+  stats: { flex: 1, width: '100%' },
+  heading: { ...Type.title, color: colors.label },
+  description: { ...Type.footnote, color: colors.labelSecondary, marginTop: Spacing.xs },
+  totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator, marginTop: Spacing.lg, paddingTop: Spacing.lg },
+  totalLabel: { ...Type.footnote, color: colors.labelSecondary, flex: 1 },
+  totalValue: { ...Type.bodyStrong, color: colors.accent },
+  note: { fontSize: 11, lineHeight: 15, color: colors.labelTertiary, marginTop: Spacing.sm },
 });

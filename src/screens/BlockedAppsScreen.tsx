@@ -1,273 +1,166 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  Image,
-  Alert,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from '../theme';
 import type { Palette } from '../colors';
+import { Radius, Spacing, Type } from '../colors';
+import { EmptyState } from '../components/EmptyState';
+import { PressableScale } from '../components/PressableScale';
+import { LockIcon, PlusIcon } from '../components/icons';
+import { usePermissions } from '../hooks/usePermissions';
 import {
-  getBlockedApps,
-  setBlockedApps,
-  isDisableLocked,
+  cleanupExpiredBlocks,
   disableLockRemainingMs,
+  getBlockedApps,
+  isDisableLocked,
+  setBlockedApps,
   type BlockedApp,
 } from '../store/storage';
-import { LockIcon, PlusIcon } from '../components/icons';
-import { EmptyState } from '../components/EmptyState';
+import { useTheme } from '../theme';
+
+const lockLabel = (app: BlockedApp) => {
+  const remaining = disableLockRemainingMs(app);
+  if (remaining <= 0) return 'Ready to remove';
+  if (remaining >= 86_400_000) return `Removal locked for ${Math.ceil(remaining / 86_400_000)}d`;
+  if (remaining >= 3_600_000) return `Removal locked for ${Math.ceil(remaining / 3_600_000)}h`;
+  return `Removal locked for ${Math.max(1, Math.ceil(remaining / 60_000))}m`;
+};
 
 export const BlockedAppsScreen = ({ navigation }: any) => {
-  const { colors: Colors } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
-  const [blockedApps, setBlockedAppsState] = useState<BlockedApp[]>([]);
+  const permissions = usePermissions();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const [apps, setApps] = useState<BlockedApp[]>([]);
   const [, setTick] = useState(0);
 
-  const cleanupExpiredBlocks = () => {
-    const now = Date.now();
-    const apps = getBlockedApps();
-    // Still prune expired timed entries that Home created from storage, even
-    // though this screen no longer renders timed apps.
-    const filtered = apps.filter((app) => {
-      if (app.blockType === 'permanent') return true;
-      if (app.blockType === 'timed' && app.blockUntil) {
-        return app.blockUntil > now;
-      }
-      return false;
-    });
-    if (filtered.length !== apps.length) {
-      setBlockedApps(filtered);
-    }
-    setBlockedAppsState(filtered);
-  };
+  const refresh = useCallback(() => {
+    cleanupExpiredBlocks();
+    setApps(getBlockedApps().filter((app) => app.blockType === 'permanent'));
+  }, []);
 
-  // Refresh whenever the tab gains focus (e.g. returning from AddApps).
+  useEffect(() => navigation.addListener('focus', refresh), [navigation, refresh]);
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      cleanupExpiredBlocks();
-    });
-    return unsubscribe;
-  }, [navigation]);
-
-  // Timer tick so the disable-lock countdown re-renders (every 60 seconds).
-  // Run only while at least one permanent app is still inside its lock window.
-  useEffect(() => {
-    const anyLocked = blockedApps.some(
-      (app) => app.blockType === 'permanent' && isDisableLocked(app)
-    );
-    if (!anyLocked) return;
-
-    const interval = setInterval(() => {
-      setTick((prev) => prev + 1);
-    }, 60000); // 1 minute
-
+    if (!apps.some(isDisableLocked)) return;
+    const interval = setInterval(() => setTick((value) => value + 1), 60_000);
     return () => clearInterval(interval);
-  }, [blockedApps]);
+  }, [apps]);
 
-  const removeApp = (packageName: string) => {
-    const app = blockedApps.find((a) => a.packageName === packageName);
-    if (app && isDisableLocked(app)) {
-      const ms = disableLockRemainingMs(app);
-      const DAY_MS = 24 * 60 * 60 * 1000;
-      const timeStr = ms >= DAY_MS
-        ? `${Math.ceil(ms / DAY_MS)} day(s)`
-        : `${Math.ceil(ms / 60000)} minute(s)`;
-      Alert.alert('Locked', `You can remove this in about ${timeStr}.`);
+  const addApp = () => {
+    if (!permissions.coreReady) {
+      navigation.navigate('Permissions');
       return;
     }
-    const updated = blockedApps.filter((a) => a.packageName !== packageName);
-    setBlockedAppsState(updated);
-    setBlockedApps(updated);
+    navigation.navigate('AddApps', { mode: 'permanent' });
   };
 
-  const permanentApps = blockedApps.filter(
-    (app) => app.blockType === 'permanent'
-  );
+  const remove = (app: BlockedApp) => {
+    if (isDisableLocked(app)) {
+      Alert.alert('Removal is locked', lockLabel(app));
+      return;
+    }
+    Alert.alert('Remove block?', `${app.appName} will be available again.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          setBlockedApps(getBlockedApps().filter((item) => item.packageName !== app.packageName));
+          refresh();
+        },
+      },
+    ]);
+  };
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Text style={styles.title}>Blocked Apps</Text>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.lg }]}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.maxWidth}>
+        <Text style={styles.largeTitle}>Blocks</Text>
+        <Text style={styles.intro}>Apps that stay out of reach until you choose to remove them.</Text>
+
+        {apps.length === 0 ? (
+          <EmptyState
+            illustration="lock"
+            title="No permanent blocks"
+            subtitle="Add an app you want to keep out of your routine."
+            actionLabel="Add an app"
+            onAction={addApp}
+          />
+        ) : (
+          <>
+            <View style={styles.list}>
+              {apps.map((app, index) => {
+                const locked = isDisableLocked(app);
+                return (
+                  <View key={app.packageName}>
+                    <View style={styles.row}>
+                      {app.iconBase64 ? (
+                        <Image source={{ uri: `data:image/png;base64,${app.iconBase64}` }} style={styles.icon} />
+                      ) : <View style={styles.iconPlaceholder} />}
+                      <View style={styles.copy}>
+                        <Text style={styles.appName} numberOfLines={1}>{app.appName}</Text>
+                        <View style={styles.lockLine}>
+                          {locked ? <LockIcon size={13} color={colors.labelTertiary} /> : null}
+                          <Text style={[styles.lockText, !locked && styles.readyText]}>{lockLabel(app)}</Text>
+                        </View>
+                      </View>
+                      {!locked ? (
+                        <PressableScale
+                          accessibilityRole="button"
+                          accessibilityLabel={`Remove ${app.appName}`}
+                          onPress={() => remove(app)}
+                          style={styles.remove}
+                          pressedStyle={styles.pressed}
+                        >
+                          <Text style={styles.removeText}>Remove</Text>
+                        </PressableScale>
+                      ) : null}
+                    </View>
+                    {index < apps.length - 1 ? <View style={styles.separator} /> : null}
+                  </View>
+                );
+              })}
+            </View>
+            <PressableScale
+              containerStyle={styles.fullWidth}
+              accessibilityRole="button"
+              onPress={addApp}
+              style={styles.addButton}
+              pressedStyle={styles.pressed}
+            >
+              <PlusIcon size={18} color={colors.accent} />
+              <Text style={styles.addText}>Add permanent block</Text>
+            </PressableScale>
+          </>
+        )}
       </View>
-
-      {permanentApps.length === 0 ? (
-        <EmptyState
-          illustration="lock"
-          title="No apps blocked"
-          subtitle="Add apps you want to permanently keep out of reach."
-          actionLabel="Add an app"
-          onAction={() => navigation.navigate('AddApps', { mode: 'permanent' })}
-        />
-      ) : (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>PERMANENT</Text>
-          {permanentApps.map((app) => {
-            const locked = isDisableLocked(app);
-            const remainingMs = disableLockRemainingMs(app);
-            const DAY_MS = 24 * 60 * 60 * 1000;
-            const lockLabel = remainingMs >= DAY_MS
-              ? `Locked · ${Math.ceil(remainingMs / DAY_MS)}d`
-              : `Locked · ${Math.ceil(remainingMs / 60000)}m`;
-            return (
-              <View
-                key={app.packageName}
-                style={[styles.appRow, styles.permanentAppRow]}
-              >
-                {app.iconBase64 ? (
-                  <Image
-                    source={{ uri: `data:image/png;base64,${app.iconBase64}` }}
-                    style={styles.icon}
-                  />
-                ) : (
-                  <View style={styles.iconPlaceholder} />
-                )}
-                <View style={styles.appInfo}>
-                  <Text style={styles.appName}>{app.appName}</Text>
-                  <View style={styles.permanentChip}>
-                    <Text style={styles.permanentChipText}>PERMANENT</Text>
-                  </View>
-                </View>
-                {locked ? (
-                  <View style={styles.lockBadge}>
-                    <LockIcon size={14} color={Colors.accent} />
-                    <Text style={styles.lockBadgeText}>{lockLabel}</Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity onPress={() => removeApp(app.packageName)}>
-                    <Text style={styles.remove}>Remove</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            );
-          })}
-        </View>
-      )}
-
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => navigation.navigate('AddApps', { mode: 'permanent' })}
-      >
-        <PlusIcon size={18} color={Colors.accent} />
-        <Text style={styles.addButtonText}>Add more apps</Text>
-      </TouchableOpacity>
-
-      <View style={styles.bottomSpacer} />
     </ScrollView>
   );
 };
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: Colors.text,
-  },
-  section: {
-    paddingHorizontal: 16,
-    marginTop: 16,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    letterSpacing: 1.2,
-    marginBottom: 14,
-  },
-  appRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.bgSecondary,
-  },
-  permanentAppRow: {
-    borderWidth: 1,
-    borderColor: Colors.accent,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    marginBottom: 8,
-  },
-  icon: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  iconPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: Colors.bgSecondary,
-    marginRight: 12,
-  },
-  appInfo: {
-    flex: 1,
-  },
-  appName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  permanentChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.accentSoft,
-    borderRadius: 4,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    marginTop: 4,
-  },
-  permanentChipText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.accent,
-    letterSpacing: 0.8,
-  },
-  lockBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  lockBadgeText: {
-    fontSize: 13,
-    color: Colors.accent,
-    fontWeight: '500',
-    marginLeft: 4,
-  },
-  remove: {
-    fontSize: 13,
-    color: Colors.textSecondary,
-  },
-  addButton: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.accent,
-    borderRadius: 24,
-    marginHorizontal: 16,
-    marginVertical: 24,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  addButtonText: {
-    color: Colors.accent,
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginLeft: 6,
-  },
-  bottomSpacer: {
-    height: 24,
-  },
+const makeStyles = (colors: Palette) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: Spacing.lg, paddingBottom: 120, alignItems: 'center' },
+  maxWidth: { width: '100%', maxWidth: 680 },
+  largeTitle: { ...Type.largeTitle, color: colors.label },
+  intro: { ...Type.body, color: colors.labelSecondary, marginTop: Spacing.sm, maxWidth: 520 },
+  list: { marginTop: Spacing.xxl, borderRadius: Radius.lg, backgroundColor: colors.surface, overflow: 'hidden' },
+  row: { minHeight: 78, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  icon: { width: 48, height: 48, borderRadius: 12 },
+  iconPlaceholder: { width: 48, height: 48, borderRadius: 12, backgroundColor: colors.surfacePressed },
+  copy: { flex: 1 },
+  appName: { ...Type.bodyStrong, color: colors.label },
+  lockLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
+  lockText: { ...Type.footnote, color: colors.labelTertiary },
+  readyText: { color: colors.accent },
+  remove: { minHeight: 48, borderRadius: Radius.pill, paddingHorizontal: Spacing.md, alignItems: 'center' },
+  removeText: { ...Type.footnoteStrong, color: colors.danger },
+  separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginLeft: 76 },
+  fullWidth: { width: '100%' },
+  addButton: { marginTop: Spacing.md, borderRadius: Radius.pill, borderWidth: 1, borderColor: colors.separator, backgroundColor: colors.surface, alignItems: 'center', flexDirection: 'row', gap: Spacing.sm },
+  addText: { ...Type.bodyStrong, color: colors.accent },
+  pressed: { backgroundColor: colors.surfacePressed },
 });

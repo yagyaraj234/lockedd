@@ -12,7 +12,7 @@ interface IconProps {
   color?: string;
 }
 
-const stroke = (color?: string) => color ?? Colors.text;
+const stroke = (color?: string) => color ?? Colors.label;
 
 export const HomeIcon = ({ size = 24, color }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -50,9 +50,10 @@ export const GearIcon = ({ size = 24, color }: IconProps) => (
   <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
     <Circle cx={12} cy={12} r={3} stroke={stroke(color)} strokeWidth={2} />
     <Path
-      d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.7 5.3l-1.8 1.8M7.1 16.9l-1.8 1.8M18.7 18.7l-1.8-1.8M7.1 7.1 5.3 5.3"
+      d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.38.28.6.72.6 1.2v3.6c0 .48-.22.92-.6 1.2Z"
       stroke={stroke(color)}
-      strokeWidth={2}
+      strokeWidth={1.7}
+      strokeLinejoin="round"
       strokeLinecap="round"
     />
   </Svg>
@@ -108,5 +109,35 @@ export const SearchIcon = ({ size = 24, color }: IconProps) => (
       strokeWidth={2}
       strokeLinecap="round"
     />
+  </Svg>
+);
+
+export const CheckIcon = ({ size = 24, color }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="m5 12.5 4.2 4.2L19 7"
+      stroke={stroke(color)}
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+export const ChevronRightIcon = ({ size = 24, color }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="m9 6 6 6-6 6"
+      stroke={stroke(color)}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
+export const CloseIcon = ({ size = 24, color }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path d="M6 6l12 12M18 6 6 18" stroke={stroke(color)} strokeWidth={2} strokeLinecap="round" />
   </Svg>
 );

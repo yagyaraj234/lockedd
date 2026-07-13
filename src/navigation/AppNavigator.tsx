@@ -1,109 +1,118 @@
 import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { StyleSheet, View } from 'react-native';
+import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, TransitionPresets } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
 import { getSettings, resyncNativeBlockedApps, subscribeSettings } from '../store/storage';
-import { OnboardingScreen1 } from '../screens/onboarding/OnboardingScreen1';
-import { OnboardingScreen2 } from '../screens/onboarding/OnboardingScreen2';
-import { OnboardingScreen3 } from '../screens/onboarding/OnboardingScreen3';
-import { OnboardingScreen4 } from '../screens/onboarding/OnboardingScreen4';
-import { OnboardingScreen5 } from '../screens/onboarding/OnboardingScreen5';
+import { OnboardingFlowScreen } from '../screens/onboarding/OnboardingFlowScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { BlockedAppsScreen } from '../screens/BlockedAppsScreen';
 import { AddAppsScreen } from '../screens/AddAppsScreen';
 import { ConfigurationScreen } from '../screens/ConfigurationScreen';
-import { UnlockProgressScreen } from '../screens/UnlockProgressScreen';
+import { PermissionsScreen } from '../screens/PermissionsScreen';
 import { HomeIcon, ShieldIcon, GearIcon } from '../components/icons';
+import { MaterialScreen } from '../components/AppMaterial';
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
+const TodayTab = (props: any) => <HomeScreen {...props} />;
+const BlocksTab = (props: any) => <BlockedAppsScreen {...props} />;
+const SettingsTab = (props: any) => <ConfigurationScreen {...props} />;
+const AddAppsRoute = (props: any) => <MaterialScreen><AddAppsScreen {...props} /></MaterialScreen>;
+const PermissionsRoute = (props: any) => <PermissionsScreen {...props} />;
+
+const TabMaterial = () => {
+  const { colors } = useTheme();
+  return <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.surface }]} />;
+};
+
 const MainTabs = () => {
-  const { colors: Colors } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   return (
-  <Tab.Navigator
-    screenOptions={{
-      headerShown: false,
-      tabBarActiveTintColor: Colors.accent,
-      tabBarInactiveTintColor: Colors.textTertiary,
-      tabBarStyle: {
-        backgroundColor: Colors.bgSecondary,
-        borderTopWidth: 1,
-        borderTopColor: Colors.border,
-        height: 60 + insets.bottom,
-        paddingBottom: 8 + insets.bottom,
-        paddingTop: 6,
-      },
-      tabBarLabelStyle: { fontSize: 11, fontWeight: '600', letterSpacing: 0.3 },
-    }}
-  >
-    <Tab.Screen
-      name="Home"
-      component={HomeScreen}
-      options={{ tabBarIcon: ({ color }) => <HomeIcon size={22} color={color} /> }}
-    />
-    <Tab.Screen
-      name="BlockedApps"
-      component={BlockedAppsScreen}
-      options={{ title: 'Blocked Apps', tabBarIcon: ({ color }) => <ShieldIcon size={22} color={color} /> }}
-    />
-    <Tab.Screen
-      name="Settings"
-      component={ConfigurationScreen}
-      options={{ tabBarIcon: ({ color }) => <GearIcon size={22} color={color} /> }}
-    />
-  </Tab.Navigator>
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        animation: 'none',
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.labelTertiary,
+        tabBarBackground: () => <TabMaterial />,
+        tabBarStyle: {
+          position: 'absolute',
+          backgroundColor: 'transparent',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.separator,
+          height: 62 + insets.bottom,
+          paddingBottom: 8 + insets.bottom,
+          paddingTop: 7,
+          elevation: 0,
+        },
+        tabBarLabelStyle: { fontSize: 11, lineHeight: 15, fontWeight: '600' },
+      }}
+    >
+      <Tab.Screen
+        name="Home"
+        component={TodayTab}
+        options={{ title: 'Today', tabBarIcon: ({ color }) => <HomeIcon size={22} color={color} /> }}
+      />
+      <Tab.Screen
+        name="BlockedApps"
+        component={BlocksTab}
+        options={{ title: 'Blocks', tabBarIcon: ({ color }) => <ShieldIcon size={22} color={color} /> }}
+      />
+      <Tab.Screen
+        name="Settings"
+        component={SettingsTab}
+        options={{ tabBarIcon: ({ color }) => <GearIcon size={22} color={color} /> }}
+      />
+    </Tab.Navigator>
   );
 };
 
 export const AppNavigator = () => {
-  const { colors: Colors } = useTheme();
+  const { colors, name } = useTheme();
   const [onboardingComplete, setOnboardingComplete] = useState(false);
 
   useEffect(() => {
-    const refresh = () => {
-      try {
-        setOnboardingComplete(getSettings().onboardingComplete);
-      } catch {
-        setOnboardingComplete(false);
-      }
-    };
+    const refresh = () => setOnboardingComplete(getSettings().onboardingComplete);
     refresh();
-    // Prune expired timed blocks and rewrite the native mirror the
-    // accessibility service reads — repairs installs whose mirror was never
-    // written (e.g. after a failed sync) without waiting for a list edit.
     resyncNativeBlockedApps();
-    // Re-read when settings change (e.g. onboarding completes) so the navigator
-    // swaps from the onboarding stack to the main app stack.
     return subscribeSettings(refresh);
   }, []);
 
-  const screenOptions = {
-    headerShown: false,
-    cardStyle: { backgroundColor: Colors.bg },
-    gestureEnabled: true,
-    ...TransitionPresets.SlideFromRightIOS,
+  const baseTheme = name === 'dark' ? DarkTheme : DefaultTheme;
+  const navigationTheme = {
+    ...baseTheme,
+    colors: {
+      ...baseTheme.colors,
+      primary: colors.accent,
+      background: colors.background,
+      card: colors.surface,
+      text: colors.label,
+      border: colors.separator,
+    },
   };
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={screenOptions}>
+    <NavigationContainer theme={navigationTheme}>
+      <Stack.Navigator
+        screenOptions={{
+          headerShown: false,
+          cardStyle: { backgroundColor: colors.background },
+          gestureEnabled: true,
+          ...TransitionPresets.SlideFromRightIOS,
+        }}
+      >
         {!onboardingComplete ? (
-          <Stack.Group>
-            <Stack.Screen name="Onboarding1" component={OnboardingScreen1} />
-            <Stack.Screen name="Onboarding2" component={OnboardingScreen2} />
-            <Stack.Screen name="Onboarding3" component={OnboardingScreen3} />
-            <Stack.Screen name="Onboarding4" component={OnboardingScreen4} />
-            <Stack.Screen name="Onboarding5" component={OnboardingScreen5} />
-          </Stack.Group>
+          <Stack.Screen name="Onboarding" component={OnboardingFlowScreen} />
         ) : (
           <Stack.Group>
             <Stack.Screen name="Tabs" component={MainTabs} />
-            <Stack.Screen name="AddApps" component={AddAppsScreen} />
-            <Stack.Screen name="UnlockProgress" component={UnlockProgressScreen} />
+            <Stack.Screen name="AddApps" component={AddAppsRoute} />
+            <Stack.Screen name="Permissions" component={PermissionsRoute} />
           </Stack.Group>
         )}
       </Stack.Navigator>

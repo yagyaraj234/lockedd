@@ -1,32 +1,32 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Palette, Palettes, ThemeName } from './colors';
+import { useColorScheme } from 'react-native';
+import { Palette, Palettes, ThemeName, ThemePreference } from './colors';
 import { getSettings, updateSettings, subscribeSettings } from './store/storage';
 
 interface ThemeContextValue {
+  preference: ThemePreference;
   name: ThemeName;
   colors: Palette;
-  setTheme: (name: ThemeName) => void;
-  toggle: () => void;
+  setTheme: (preference: ThemePreference) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
-  const [name, setName] = useState<ThemeName>(() => getSettings().theme);
+  const systemName = useColorScheme() === 'light' ? 'light' : 'dark';
+  const [preference, setPreference] = useState<ThemePreference>(() => getSettings().theme);
 
-  // Keep the in-memory theme in sync with persisted settings — covers writes
-  // from anywhere (Settings screen, onboarding) through one source of truth.
-  useEffect(() => subscribeSettings(() => setName(getSettings().theme)), []);
+  useEffect(() => subscribeSettings(() => setPreference(getSettings().theme)), []);
 
   const value = useMemo<ThemeContextValue>(() => {
-    const setTheme = (next: ThemeName) => updateSettings({ theme: next });
+    const name = preference === 'system' ? systemName : preference;
     return {
+      preference,
       name,
       colors: Palettes[name],
-      setTheme,
-      toggle: () => setTheme(name === 'dark' ? 'light' : 'dark'),
+      setTheme: (next) => updateSettings({ theme: next }),
     };
-  }, [name]);
+  }, [preference, systemName]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 };

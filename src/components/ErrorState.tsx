@@ -1,15 +1,17 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Path, Line, Circle } from 'react-native-svg';
 import { useTheme } from '../theme';
 import type { Palette } from '../colors';
+import { Radius, Spacing, Type } from '../colors';
+import { PressableScale } from './PressableScale';
 
 const ErrorSVG = ({ c }: { c: Palette }) => (
   <Svg width={100} height={100} viewBox="0 0 100 100" fill="none">
     {/* Warning triangle */}
     <Path
       d="M50 16 L88 82 L12 82 Z"
-      fill={c.dangerSoft}
+      fill={c.dangerMuted}
       stroke={c.danger}
       strokeWidth="2.5"
       strokeLinejoin="round"
@@ -41,9 +43,9 @@ export const ErrorState = ({
       <Text style={styles.title}>Oops</Text>
       <Text style={styles.message}>{message}</Text>
       {onRetry ? (
-        <TouchableOpacity style={styles.retryBtn} onPress={onRetry} activeOpacity={0.8}>
+        <PressableScale accessibilityRole="button" style={styles.retryBtn} pressedStyle={styles.pressed} onPress={onRetry}>
           <Text style={styles.retryText}>Try Again</Text>
-        </TouchableOpacity>
+        </PressableScale>
       ) : null}
     </View>
   );
@@ -62,27 +64,25 @@ const makeStyles = (Colors: Palette) => StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: Colors.text,
+    color: Colors.label,
     marginBottom: 8,
   },
   message: {
     fontSize: 14,
-    color: Colors.textSecondary,
+    color: Colors.labelSecondary,
     textAlign: 'center',
     lineHeight: 20,
   },
   retryBtn: {
     marginTop: 24,
-    backgroundColor: Colors.bgSecondary,
-    borderWidth: 1,
-    borderColor: Colors.textTertiary,
-    borderRadius: 20,
-    paddingVertical: 10,
-    paddingHorizontal: 28,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Spacing.xl,
+    alignItems: 'center',
   },
+  pressed: { backgroundColor: Colors.surfacePressed },
   retryText: {
-    color: Colors.text,
-    fontSize: 14,
-    fontWeight: '600',
+    ...Type.bodyStrong,
+    color: Colors.label,
   },
 });

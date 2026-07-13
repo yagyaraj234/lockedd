@@ -1,10 +1,12 @@
 import { useEffect } from 'react';
+import { LogBox } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { AppBlocker } from './modules/app-blocker/src';
 import { ThemeProvider, useTheme } from './src/theme';
+import { AppMaterial } from './src/components/AppMaterial';
 
 const ThemedStatusBar = () => {
   const { name } = useTheme();
@@ -13,12 +15,14 @@ const ThemedStatusBar = () => {
 
 const DNS_HOSTNAME = 'family.cloudflare-dns.com';
 
+LogBox.ignoreLogs(['InteractionManager has been deprecated']);
+
 export default function App() {
   useEffect(() => {
     try {
       const hasPerm = AppBlocker.hasWriteSecureSettings();
       if (!hasPerm) {
-        console.warn('[DNS] WRITE_SECURE_SETTINGS not granted — DNS cannot be set. Run: adb shell pm grant com.yagyaraj.locked android.permission.WRITE_SECURE_SETTINGS');
+        console.info('[DNS] WRITE_SECURE_SETTINGS not granted — DNS setup skipped.');
         return;
       }
       const before = AppBlocker.getPrivateDns();
@@ -38,8 +42,10 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <ThemeProvider>
-          <AppNavigator />
-          <ThemedStatusBar />
+          <AppMaterial>
+            <AppNavigator />
+            <ThemedStatusBar />
+          </AppMaterial>
         </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

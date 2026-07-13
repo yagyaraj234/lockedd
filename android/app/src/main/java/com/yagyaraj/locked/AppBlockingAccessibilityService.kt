@@ -1,16 +1,35 @@
 package com.yagyaraj.locked
 
 import android.accessibilityservice.AccessibilityService
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.view.animation.AccelerateInterpolator
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
+import android.widget.LinearLayout
+import android.widget.TextView
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,7 +46,7 @@ object BlockerPrefs {
 
   // Block-attempt stats. Counts each distinct time a blocked app was intercepted,
   // so the RN app can show "opens stopped" / "time saved" on Home. Daily counter
-  // resets at date rollover (mirrors StepCounter's stepDate/stepCount pattern);
+  // resets at date rollover;
   // total is all-time. Read back via AppBlockerModule.getBlockStats().
   const val STATS_TOTAL = "stats_total"
   const val STATS_TODAY_COUNT = "stats_today_count"
@@ -104,9 +123,21 @@ const val LATENCY_LOG = false
  */
 class AppBlockingAccessibilityService : AccessibilityService() {
 
-  // Last package we put up the block screen for. Prevents relaunching
-  // BlockingActivity on top of itself while the same app keeps emitting events.
+  // Last package we put up the block screen for, plus when. Prevents relaunching
+  // BlockingActivity on top of itself while the same app keeps emitting events in
+  // one episode. This is a SHORT TIME DEBOUNCE, not a sticky package guard: a
+  // sticky guard that only clears when a non-blocked app appears stays stuck on
+  // the blocked package whenever the launcher emits no window event after HOME
+  // (OEM-dependent), which permanently disables re-blocking — the user can then
+  // just keep reopening the app. The debounce always expires, so a genuine reopen
+  // re-blocks.
   private var lastBlocked: String? = null
+  private var lastBlockLaunchAt: Long = 0L
+
+  // How long after launching the block screen we suppress a relaunch for the same
+  // package. Long enough to swallow the window-event burst from HOME + our own
+  // activity coming to front; short enough that reopening the app re-blocks.
+  private val RELAUNCH_DEBOUNCE_MS = 1200L
 
   // Epoch millis of the last time onWindowsChanged launched BlockingActivity.
   // Debounces re-triggers that fire as our own BlockingActivity comes to front
@@ -121,6 +152,33 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   // Epoch millis of the last GLOBAL_ACTION_BACK fired by the prevention-mode
   // tamper guard. Same debounce rationale as lastDnsBackAt.
   private var lastTamperBackAt: Long = 0L
+
+  // --- Overlay block screen ------------------------------------------------
+  // Drawn directly on top of everything via WindowManager (TYPE_APPLICATION_OVERLAY).
+  // Made visible synchronously inside the accessibility event callback so there is
+  // zero render gap — no activity launch, no start animation, no race. The blocked
+  // app cannot be interacted with the instant showOverlay() returns.
+  private var overlayWm: WindowManager? = null
+  private var overlayRoot: BlockOverlayRoot? = null
+  private var overlayTimerText: TextView? = null
+  private var overlayPhaseText: TextView? = null
+  private var overlayAppText: TextView? = null
+  private var overlayOrbView: BreathingOrbView? = null
+  private var overlayBreathAnimator: ValueAnimator? = null
+  private val overlayHandler = Handler(Looper.getMainLooper())
+  private var overlaySecondsRemaining = 300
+  private var overlayRunning = false
+
+  private val phaseLabels = arrayOf("inhale", "hold", "exhale", "hold")
+  private val phaseDurations = longArrayOf(4000L, 4000L, 4000L, 4000L)
+  private val phaseScales = arrayOf(
+    Pair(0.72f, 1.0f), Pair(1.0f, 1.0f), Pair(1.0f, 0.72f), Pair(0.72f, 0.72f)
+  )
+
+  override fun onServiceConnected() {
+    super.onServiceConnected()
+    try { setupOverlay() } catch (_: Exception) {}
+  }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
     if (event == null) return
@@ -183,9 +241,12 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + pkg, 0L)
     if (allowedUntil > System.currentTimeMillis()) return
 
-    // Already showing the block screen for this package — don't relaunch.
-    if (lastBlocked == pkg) return
+    // Just launched the block screen for this package — don't relaunch on top of
+    // the event burst. Time-debounced (not sticky) so a genuine reopen re-blocks.
+    val now = System.currentTimeMillis()
+    if (lastBlocked == pkg && now - lastBlockLaunchAt < RELAUNCH_DEBOUNCE_MS) return
     lastBlocked = pkg
+    lastBlockLaunchAt = now
 
     launchBlockingActivity(pkg, prefs)
   }
@@ -235,9 +296,11 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       if (pkg != null && pkg != packageName && blocked.contains(pkg)) {
         val blockedUntil = prefs.getLong(BlockerPrefs.UNTIL_PREFIX + pkg, 0L)
         val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + pkg, 0L)
-        if ((blockedUntil == 0L || now <= blockedUntil) && allowedUntil <= now && lastBlocked != pkg) {
+        val debounced = lastBlocked == pkg && now - lastBlockLaunchAt < RELAUNCH_DEBOUNCE_MS
+        if ((blockedUntil == 0L || now <= blockedUntil) && allowedUntil <= now && !debounced) {
           lastWindowsBlockAt = now
           lastBlocked = pkg
+          lastBlockLaunchAt = now
           launchBlockingActivity(pkg, prefs)
           return
         }
@@ -269,37 +332,235 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
   private fun launchBlockingActivity(pkg: String, prefs: SharedPreferences) {
     recordBlockAttempt(prefs)
-
-    // Background the blocked app IMMEDIATELY, before doing anything else. HOME is a
-    // system transition that takes the app out of the foreground in ~tens of ms —
-    // far faster than our activity can render. This is what actually closes the
-    // "usable window": the app stops being interactive at detection time, not when
-    // the block screen finishes drawing. Worst case (if the activity launch below
-    // loses the race) the user lands on the home screen with the app backgrounded —
-    // still blocked, just without the breathing UI. It can never leave the app usable.
+    if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+    // Background the app so it's not interactive under the overlay.
     performGlobalAction(GLOBAL_ACTION_HOME)
+    if (LATENCY_LOG) Log.d("BlockLatency", "showOverlay pkg=$pkg t=${System.currentTimeMillis()}")
+    // Show overlay synchronously — no activity, no race, no render gap.
+    overlayHandler.post { showOverlay(pkg) }
+  }
 
-    // Exit split-screen before launching so BlockingActivity covers the full
-    // screen rather than just one pane. The manifest flag resizeableActivity=false
-    // is a system hint, but an explicit global action is more reliable.
-    if (isInSplitScreen()) {
-      performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-    }
+  private fun setupOverlay() {
+    val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+    overlayWm = wm
+    val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+    else
+      @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+    val params = WindowManager.LayoutParams(
+      WindowManager.LayoutParams.MATCH_PARENT,
+      WindowManager.LayoutParams.MATCH_PARENT,
+      type,
+      WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+      PixelFormat.OPAQUE
+    )
+    val root = BlockOverlayRoot(this) { dismissOverlay() }
+    buildOverlayLayout(root)
+    root.visibility = View.GONE
+    overlayRoot = root
+    wm.addView(root, params)
+  }
 
-    val intent = Intent(this, BlockingActivity::class.java).apply {
-      addFlags(
-        Intent.FLAG_ACTIVITY_NEW_TASK or
-          Intent.FLAG_ACTIVITY_SINGLE_TOP or
-          Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-          // No open animation: the launch slide-in is ~300-500ms during which the
-          // blocked app underneath is still visible and touchable. Popping the
-          // block screen in instantly closes that usable window.
-          Intent.FLAG_ACTIVITY_NO_ANIMATION
-      )
-      putExtra(BlockingActivity.EXTRA_BLOCKED_PACKAGE, pkg)
+  private fun buildOverlayLayout(root: LinearLayout) {
+    val d = resources.displayMetrics.density
+    root.orientation = LinearLayout.VERTICAL
+    root.gravity = Gravity.CENTER_HORIZONTAL
+    root.setPadding((28 * d).toInt(), 0, (28 * d).toInt(), 0)
+    root.setBackgroundColor(Color.parseColor("#0B0C0A"))
+
+    root.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.7f))
+
+    root.addView(TextView(this).apply {
+      text = "LOCKED"
+      textSize = 12f
+      setTextColor(Color.parseColor("#B7D95B"))
+      gravity = Gravity.CENTER
+      typeface = Typeface.create("sans-serif", Typeface.BOLD)
+      letterSpacing = 0.18f
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+      bottomMargin = (18 * d).toInt()
+    })
+
+    root.addView(TextView(this).apply {
+      text = "Blocked"
+      textSize = 32f
+      setTextColor(Color.parseColor("#F5F7F0"))
+      gravity = Gravity.CENTER
+      typeface = Typeface.create("sans-serif", Typeface.BOLD)
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+    })
+
+    val appText = TextView(this).apply {
+      textSize = 16f
+      setTextColor(Color.parseColor("#A8ADA0"))
+      gravity = Gravity.CENTER
+      maxLines = 2
     }
-    if (LATENCY_LOG) Log.d("BlockLatency", "startActivity pkg=$pkg t=${System.currentTimeMillis()}")
-    startActivity(intent)
+    overlayAppText = appText
+    root.addView(appText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+      topMargin = (8 * d).toInt()
+      bottomMargin = (26 * d).toInt()
+    })
+
+    val orb = BreathingOrbView(this)
+    overlayOrbView = orb
+    val orbSize = (176 * d).toInt()
+    root.addView(orb, LinearLayout.LayoutParams(orbSize, orbSize).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+    })
+
+    val phaseText = TextView(this).apply {
+      text = "inhale"
+      textSize = 13f
+      setTextColor(Color.parseColor("#B7D95B"))
+      gravity = Gravity.CENTER
+      typeface = Typeface.create("sans-serif", Typeface.BOLD)
+      letterSpacing = 0.12f
+      alpha = 0.8f
+    }
+    overlayPhaseText = phaseText
+    root.addView(phaseText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+      topMargin = (20 * d).toInt()
+    })
+
+    root.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (32 * d).toInt()))
+
+    val timerText = TextView(this).apply {
+      text = "05:00"
+      textSize = 46f
+      typeface = Typeface.MONOSPACE
+      setTextColor(Color.parseColor("#F5F7F0"))
+      gravity = Gravity.CENTER
+      letterSpacing = 0.04f
+    }
+    overlayTimerText = timerText
+    root.addView(timerText, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+    })
+
+    root.addView(TextView(this).apply {
+      text = "Breathe slowly. You will return home when this pause ends."
+      textSize = 13f
+      setTextColor(Color.parseColor("#A8ADA0"))
+      gravity = Gravity.CENTER
+      maxLines = 2
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+      topMargin = (8 * d).toInt()
+    })
+
+    root.addView(TextView(this).apply {
+      text = "Return Home"
+      textSize = 16f
+      setTextColor(Color.parseColor("#12150B"))
+      gravity = Gravity.CENTER
+      typeface = Typeface.create("sans-serif", Typeface.BOLD)
+      minHeight = (48 * d).toInt()
+      minWidth = (180 * d).toInt()
+      setPadding((24 * d).toInt(), 0, (24 * d).toInt(), 0)
+      background = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 28 * d
+        setColor(Color.parseColor("#B7D95B"))
+      }
+      setOnClickListener { dismissOverlay() }
+      contentDescription = "Return Home"
+    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (52 * d).toInt()).apply {
+      gravity = Gravity.CENTER_HORIZONTAL
+      topMargin = (26 * d).toInt()
+    })
+
+    root.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.8f))
+  }
+
+  private fun showOverlay(pkg: String) {
+    overlayHandler.removeCallbacksAndMessages(null)
+    overlayBreathAnimator?.cancel()
+    overlayRunning = true
+    overlaySecondsRemaining = 300
+    overlayTimerText?.text = "05:00"
+    overlayAppText?.text = "${appLabel(pkg)} is paused"
+    overlayRoot?.visibility = View.VISIBLE
+    overlayRoot?.requestFocus()
+    startOverlayTimer()
+    if (animationsEnabled()) {
+      runOverlayBreathingPhase(0)
+    } else {
+      overlayOrbView?.breathScale = 0.86f
+      overlayPhaseText?.apply { text = "breathe slowly"; alpha = 1f }
+    }
+    if (LATENCY_LOG) Log.d("BlockLatency", "overlayVisible t=${System.currentTimeMillis()}")
+  }
+
+  private fun dismissOverlay() {
+    overlayRunning = false
+    overlayBreathAnimator?.cancel()
+    overlayHandler.removeCallbacksAndMessages(null)
+    overlayRoot?.visibility = View.GONE
+    performGlobalAction(GLOBAL_ACTION_HOME)
+  }
+
+  private fun startOverlayTimer() {
+    val tick = object : Runnable {
+      override fun run() {
+        if (!overlayRunning) return
+        overlaySecondsRemaining--
+        val m = overlaySecondsRemaining / 60
+        val s = overlaySecondsRemaining % 60
+        overlayTimerText?.text = "%02d:%02d".format(m, s)
+        if (overlaySecondsRemaining > 0) overlayHandler.postDelayed(this, 1000L)
+        else dismissOverlay()
+      }
+    }
+    overlayHandler.postDelayed(tick, 1000L)
+  }
+
+  private fun runOverlayBreathingPhase(phase: Int) {
+    if (!overlayRunning || !animationsEnabled()) return
+    val pt = overlayPhaseText ?: return
+    ObjectAnimator.ofFloat(pt, "alpha", 0.8f, 0.2f).apply {
+      duration = 220
+      addListener(object : AnimatorListenerAdapter() {
+        override fun onAnimationEnd(animation: android.animation.Animator) {
+          pt.text = phaseLabels[phase]
+          ObjectAnimator.ofFloat(pt, "alpha", 0.2f, 0.8f).apply { duration = 280; start() }
+        }
+      })
+      start()
+    }
+    val (startScale, endScale) = phaseScales[phase]
+    overlayBreathAnimator?.cancel()
+    overlayBreathAnimator = ValueAnimator.ofFloat(startScale, endScale).apply {
+      duration = phaseDurations[phase]
+      interpolator = when (phase) {
+        0 -> DecelerateInterpolator(1.6f); 2 -> AccelerateInterpolator(1.6f)
+        else -> LinearInterpolator()
+      }
+      addUpdateListener { overlayOrbView?.breathScale = it.animatedValue as Float }
+      addListener(object : AnimatorListenerAdapter() {
+        private var cancelled = false
+        override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+        override fun onAnimationEnd(animation: android.animation.Animator) {
+          if (!cancelled && overlayRunning) runOverlayBreathingPhase((phase + 1) % 4)
+        }
+      })
+      start()
+    }
+  }
+
+  private fun animationsEnabled(): Boolean =
+    Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()
+
+  private fun appLabel(pkg: String): String = try {
+    val info = packageManager.getApplicationInfo(pkg, 0)
+    packageManager.getApplicationLabel(info).toString()
+  } catch (_: Exception) {
+    "This app"
   }
 
   private fun isKeyguardActive(): Boolean {
@@ -343,7 +604,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     if (!isChooser) return false
 
     val now = System.currentTimeMillis()
-    if (now - lastDnsBackAt < 1000L) return true // BACK already in flight
+    if (now - lastDnsBackAt < 400L) return true // BACK already in flight
     lastDnsBackAt = now
     performGlobalAction(GLOBAL_ACTION_BACK)
     return true
@@ -358,23 +619,19 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     var hasEditable = false
     var hasMarkerText = false
 
-    fun visit(node: AccessibilityNodeInfo?) {
-      if (node == null) return
+    // Returns true = stop walking (positive match found, no need to visit more nodes).
+    fun visit(node: AccessibilityNodeInfo?): Boolean {
+      if (node == null) return false
 
       val id = node.viewIdResourceName?.lowercase()
-      if (id != null && BlockerPrefs.PRIVATE_DNS_ID_HINTS.any { id.contains(it) }) {
-        mentionsDns = true
-      }
+      if (id != null && BlockerPrefs.PRIVATE_DNS_ID_HINTS.any { id.contains(it) }) mentionsDns = true
 
       val text = (
         (node.text?.toString() ?: "") + " " + (node.contentDescription?.toString() ?: "")
       ).lowercase()
       if (text.contains("private dns") || text.contains("private_dns")) mentionsDns = true
       if (BlockerPrefs.PRIVATE_DNS_TEXT_HINTS.any { text.contains(it) }) hasMarkerText = true
-
-      if (node.isEditable || node.className?.toString() == "android.widget.EditText") {
-        hasEditable = true
-      }
+      if (node.isEditable || node.className?.toString() == "android.widget.EditText") hasEditable = true
 
       if (DNS_LOG) {
         Log.d(
@@ -384,11 +641,16 @@ class AppBlockingAccessibilityService : AccessibilityService() {
         )
       }
 
+      // Early exit: enough info to confirm the chooser — stop traversal.
+      if (hasMarkerText || (mentionsDns && hasEditable)) return true
+
       for (i in 0 until node.childCount) {
         val child = node.getChild(i)
-        visit(child)
+        val done = visit(child)
         child?.recycle()
+        if (done) return true
       }
+      return false
     }
 
     visit(root)
@@ -493,5 +755,30 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
   override fun onInterrupt() {
     // No-op.
+  }
+
+  override fun onDestroy() {
+    overlayRunning = false
+    overlayBreathAnimator?.cancel()
+    overlayHandler.removeCallbacksAndMessages(null)
+    try { overlayRoot?.let { overlayWm?.removeView(it) } } catch (_: Exception) {}
+    super.onDestroy()
+  }
+}
+
+// Root view for the overlay block screen. Intercepts the back key so the user
+// is sent home rather than letting the key fall through to the blocked app.
+class BlockOverlayRoot(context: Context, private val onBack: () -> Unit) : LinearLayout(context) {
+  init {
+    isFocusable = true
+    isFocusableInTouchMode = true
+  }
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
+      onBack()
+      return true
+    }
+    return super.dispatchKeyEvent(event)
   }
 }
