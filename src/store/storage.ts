@@ -2,6 +2,8 @@
 // `MMKV` is a type-only export, so `new MMKV()` throws "undefined cannot be used
 // as a constructor". The v4 API creates instances via createMMKV().
 import { createMMKV } from 'react-native-mmkv';
+import type { ThemePreference } from '../colors';
+import { migrateThemePreference } from '../domain';
 
 // Use a lazy singleton
 let _storage: any = null;
@@ -51,12 +53,11 @@ export const isDisableLocked = (app: BlockedApp): boolean =>
   disableLockRemainingMs(app) > 0;
 
 export interface Settings {
-  unlockMode: 'temporary' | 'physical';
   preventionMode: boolean;
   preventionModeOffRequestedAt: number | null;
   preventionModeLockedUntil: number | null;
   onboardingComplete: boolean;
-  theme: 'dark' | 'light';
+  theme: ThemePreference;
 }
 
 // Blocked apps
@@ -147,27 +148,20 @@ export const resyncNativeBlockedApps = () => {
 
 // Settings
 export const getSettings = (): Settings => {
+  const defaults: Settings = {
+    preventionMode: true,
+    preventionModeOffRequestedAt: null,
+    preventionModeLockedUntil: null,
+    onboardingComplete: false,
+    theme: 'system',
+  };
   try {
     const data = getStorage().getString('settings');
-    return data
-      ? { theme: 'dark', preventionModeLockedUntil: null, ...JSON.parse(data) }
-      : {
-          unlockMode: 'temporary',
-          preventionMode: true,
-          preventionModeOffRequestedAt: null,
-          preventionModeLockedUntil: null,
-          onboardingComplete: false,
-          theme: 'dark',
-        };
+    if (!data) return defaults;
+    const { unlockMode: _legacyUnlockMode, ...stored } = JSON.parse(data);
+    return { ...defaults, ...stored, theme: migrateThemePreference(stored.theme) };
   } catch {
-    return {
-      unlockMode: 'temporary',
-      preventionMode: true,
-      preventionModeOffRequestedAt: null,
-      preventionModeLockedUntil: null,
-      onboardingComplete: false,
-      theme: 'dark',
-    };
+    return defaults;
   }
 };
 
@@ -225,4 +219,3 @@ export const preventionLockRemainingMs = (): number => {
 };
 
 export const isPreventionLocked = (): boolean => preventionLockRemainingMs() > 0;
-

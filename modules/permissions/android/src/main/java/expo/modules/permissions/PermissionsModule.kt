@@ -1,18 +1,11 @@
 package expo.modules.permissions
 
-import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.Manifest.permission.POST_NOTIFICATIONS
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
-import android.os.Process
 import android.provider.Settings
-import androidx.core.app.ActivityCompat
-import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -50,35 +43,6 @@ class PermissionsModule : Module() {
       }
     }
 
-    AsyncFunction("requestUsageStats") {
-      val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
-      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      try {
-        context.startActivity(intent)
-        true
-      } catch (e: Exception) {
-        false
-      }
-    }
-
-    AsyncFunction("requestActivityRecognition") {
-      try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          val activity = appContext.currentActivity
-          if (activity != null) {
-            ActivityCompat.requestPermissions(
-              activity,
-              arrayOf("android.permission.ACTIVITY_RECOGNITION"),
-              100
-            )
-          }
-        }
-        true
-      } catch (e: Exception) {
-        false
-      }
-    }
-
     AsyncFunction("requestBatteryOptimization") {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
         val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
@@ -90,22 +54,6 @@ class PermissionsModule : Module() {
         } catch (e: Exception) {
           false
         }
-      } else {
-        true
-      }
-    }
-
-    AsyncFunction("requestNotifications") {
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        val activity = appContext.currentActivity
-        if (activity != null) {
-          ActivityCompat.requestPermissions(
-            activity,
-            arrayOf(POST_NOTIFICATIONS),
-            1002
-          )
-        }
-        true
       } else {
         true
       }
@@ -152,44 +100,6 @@ class PermissionsModule : Module() {
       }
     }
 
-    AsyncFunction("checkUsageStats") {
-      try {
-        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName
-          )
-        } else {
-          @Suppress("DEPRECATION")
-          appOps.checkOpNoThrow(
-            AppOpsManager.OPSTR_GET_USAGE_STATS,
-            Process.myUid(),
-            context.packageName
-          )
-        }
-        mode == AppOpsManager.MODE_ALLOWED
-      } catch (e: Exception) {
-        false
-      }
-    }
-
-    AsyncFunction("checkActivityRecognition") {
-      try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          ContextCompat.checkSelfPermission(
-            context,
-            "android.permission.ACTIVITY_RECOGNITION"
-          ) == PackageManager.PERMISSION_GRANTED
-        } else {
-          true
-        }
-      } catch (e: Exception) {
-        false
-      }
-    }
-
     AsyncFunction("checkBatteryOptimization") {
       try {
         val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -199,12 +109,5 @@ class PermissionsModule : Module() {
       }
     }
 
-    AsyncFunction("checkNotifications") {
-      try {
-        NotificationManagerCompat.from(context).areNotificationsEnabled()
-      } catch (e: Exception) {
-        false
-      }
-    }
   }
 }

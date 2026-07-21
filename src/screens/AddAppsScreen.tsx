@@ -1,433 +1,231 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  FlatList,
-  TextInput,
-  Image,
-} from 'react-native';
+import { FlatList, Image, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme } from '../theme';
+import * as Haptics from 'expo-haptics';
 import type { Palette } from '../colors';
-import {
-  getBlockedApps,
-  setBlockedApps,
-  stampDisableLock,
-  type BlockedApp,
-} from '../store/storage';
-import { AppBlocker, type InstalledApp } from '../../modules/app-blocker/src';
-import { BlockDurationModal } from '../components/BlockDurationModal';
-import { LockDurationModal } from '../components/LockDurationModal';
-import { AppListSkeleton } from '../components/Skeleton';
+import { Radius, Spacing, Type } from '../colors';
+import { ChoiceSheet, type ChoiceOption } from '../components/ChoiceSheet';
 import { EmptyState } from '../components/EmptyState';
 import { ErrorState } from '../components/ErrorState';
-import { ChevronLeftIcon, SearchIcon } from '../components/icons';
+import { PressableScale } from '../components/PressableScale';
+import { AppListSkeleton } from '../components/Skeleton';
+import { CheckIcon, ChevronLeftIcon, SearchIcon } from '../components/icons';
+import { filterEligibleApps } from '../domain';
+import { AppBlocker, type InstalledApp } from '../../modules/app-blocker/src';
+import { getBlockedApps, setBlockedApps, stampDisableLock, type BlockedApp } from '../store/storage';
+import { useTheme } from '../theme';
 
-interface AppWithSelected extends InstalledApp {
-  selected: boolean;
-}
+type SelectableApp = InstalledApp & { selected: boolean };
 
-const AppRow = React.memo(
-  ({
-    item,
-    onToggle,
-    styles,
-  }: {
-    item: AppWithSelected;
-    onToggle: (packageName: string) => void;
-    styles: any;
-  }) => (
-    <TouchableOpacity
-      style={styles.appRow}
-      onPress={() => onToggle(item.packageName)}
-    >
-      {item.iconBase64 ? (
-        <Image
-          source={{ uri: `data:image/png;base64,${item.iconBase64}` }}
-          style={styles.icon}
-        />
-      ) : (
-        <View style={styles.iconPlaceholder} />
-      )}
-      <View style={styles.appInfo}>
-        <Text style={styles.appName}>{item.appName}</Text>
-        <Text style={styles.appPackage}>{item.packageName}</Text>
-      </View>
-      <View style={[styles.checkbox, item.selected && styles.checkboxSelected]}>
-        {item.selected && <Text style={styles.checkmark}>✓</Text>}
-      </View>
-    </TouchableOpacity>
-  )
-);
+const timedOptions: ChoiceOption<number>[] = [
+  { label: '1 hour', description: 'A short focus session', value: 3_600_000 },
+  { label: '10 hours', description: 'Most of the day', value: 36_000_000 },
+  { label: '24 hours', description: 'A full day away', value: 86_400_000 },
+];
+
+const permanentOptions: ChoiceOption<number>[] = [
+  { label: '12 hours', description: 'Earliest removal time', value: 43_200_000 },
+  { label: '1 day', description: 'Removal locked for 24 hours', value: 86_400_000 },
+  { label: '7 days', description: 'Removal locked for one week', value: 604_800_000 },
+  { label: '28 days', description: 'Removal locked for four weeks', value: 2_419_200_000 },
+];
+
+const confirmationHaptic = () => {
+  if (Platform.OS === 'android') {
+    return Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Confirm);
+  }
+  return Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+};
 
 export const AddAppsScreen = ({ navigation, route }: any) => {
-  const { colors: Colors } = useTheme();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const { colors } = useTheme();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const mode: 'temporary' | 'permanent' = route?.params?.mode ?? 'temporary';
-  const [apps, setApps] = useState<AppWithSelected[]>([]);
+  const [apps, setApps] = useState<SelectableApp[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [showDurationModal, setShowDurationModal] = useState(false);
-  const [selectedAppsToBlock, setSelectedAppsToBlock] = useState<AppWithSelected[]>([]);
-  const [showLockDurationModal, setShowLockDurationModal] = useState(false);
-  const [newAppsToStamp, setNewAppsToStamp] = useState<AppWithSelected[]>([]);
-  const [reSelectedBlocks, setReSelectedBlocks] = useState<BlockedApp[]>([]);
+  const [showSheet, setShowSheet] = useState(false);
 
-  useEffect(() => {
-    loadApps();
-  }, []);
-
-  const loadApps = async () => {
+  const loadApps = useCallback(async () => {
+    setLoading(true);
     setError(false);
     try {
       const installed = await AppBlocker.getInstalledApps();
-      const byPkg = new Map(getBlockedApps().map((a) => [a.packageName, a]));
-      const withSelected: AppWithSelected[] = installed
-        // Temporary mode can't touch permanently-blocked apps — they're managed
-        // on the Blocked Apps screen. Hiding them stops a temp block from
-        // silently downgrading a permanent one to timed.
-        .filter((app) => {
-          if (mode !== 'temporary') return true;
-          return byPkg.get(app.packageName)?.blockType !== 'permanent';
-        })
-        .map((app) => {
-          // Pre-select only blocks of the SAME mode, so the checkmarks reflect
-          // what this screen actually manages (timed here, permanent there).
-          const existing = byPkg.get(app.packageName);
-          const selected =
-            mode === 'permanent'
-              ? existing?.blockType === 'permanent'
-              : existing?.blockType === 'timed';
-          return { ...app, selected: !!selected };
-        });
-      withSelected.sort((a, b) => a.appName.localeCompare(b.appName));
-      setApps(withSelected);
-    } catch (e) {
-      console.error('Failed to load apps:', e);
+      const eligible = filterEligibleApps(installed, getBlockedApps())
+        .sort((a, b) => a.appName.localeCompare(b.appName))
+        .map((app) => ({ ...app, selected: false }));
+      setApps(eligible);
+    } catch (loadError) {
+      console.error('Failed to load installed apps:', loadError);
       setError(true);
     } finally {
       setLoading(false);
     }
-  };
-
-  const filtered = useMemo(() => {
-    const lower = search.trim().toLowerCase();
-    if (!lower) return apps;
-    return apps.filter(
-      (a) =>
-        a.appName.toLowerCase().includes(lower) ||
-        a.packageName.toLowerCase().includes(lower)
-    );
-  }, [apps, search]);
-
-  const toggleApp = useCallback((packageName: string) => {
-    setApps((prev) =>
-      prev.map((a) =>
-        a.packageName === packageName ? { ...a, selected: !a.selected } : a
-      )
-    );
   }, []);
 
-  // Merge new blocks with existing ones (replacing any same-package entries)
-  // and persist. Shared by both the permanent and timed save paths.
-  const mergeAndSave = (blockedAppsToAdd: BlockedApp[]) => {
+  useEffect(() => { loadApps(); }, [loadApps]);
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return apps;
+    return apps.filter((app) => app.appName.toLowerCase().includes(query) || app.packageName.toLowerCase().includes(query));
+  }, [apps, search]);
+  const selected = useMemo(() => apps.filter((app) => app.selected), [apps]);
+
+  const toggle = useCallback((packageName: string) => {
+    setApps((current) => current.map((app) => app.packageName === packageName ? { ...app, selected: !app.selected } : app));
+  }, []);
+
+  const save = (duration: number) => {
     const existing = getBlockedApps();
-    const merged = [
-      ...existing.filter(
-        (ea) => !blockedAppsToAdd.some((ba) => ba.packageName === ea.packageName)
-      ),
-      ...blockedAppsToAdd,
-    ];
-    setBlockedApps(merged);
-  };
-
-  const saveAndClose = () => {
-    const selected = apps.filter((a) => a.selected);
-    if (selected.length === 0) {
-      navigation.goBack();
+    const stillEligible = filterEligibleApps(selected, existing);
+    if (stillEligible.length === 0) {
+      setShowSheet(false);
+      loadApps();
       return;
     }
-
-    if (mode === 'permanent') {
-      const existing = getBlockedApps();
-      const permanentByPkg = new Map(
-        existing
-          .filter((a) => a.blockType === 'permanent')
-          .map((a) => [a.packageName, a])
-      );
-
-      // Apps already permanently blocked: preserve their existing lock — do NOT
-      // re-stamp. This prevents the bypass where re-saving resets the timer.
-      const reSelected = selected
-        .filter((a) => permanentByPkg.has(a.packageName))
-        .map((a) => permanentByPkg.get(a.packageName)!);
-
-      // Genuinely new permanent blocks that need a lock duration chosen.
-      const newlyAdded = selected.filter((a) => !permanentByPkg.has(a.packageName));
-
-      if (newlyAdded.length === 0) {
-        // Only re-selections — merge with preserved locks and go back.
-        mergeAndSave(reSelected);
-        navigation.goBack();
-        return;
-      }
-
-      // New apps need a lock duration — show the picker.
-      setNewAppsToStamp(newlyAdded);
-      setReSelectedBlocks(reSelected);
-      setShowLockDurationModal(true);
-      return;
-    }
-
-    // temporary: pick a duration via the modal
-    setSelectedAppsToBlock(selected);
-    setShowDurationModal(true);
-  };
-
-  const handleLockDurationSelect = (durationMs: number) => {
-    const stamped = newAppsToStamp.map((a) =>
-      stampDisableLock(
-        {
-          packageName: a.packageName,
-          appName: a.appName,
-          iconBase64: a.iconBase64,
-          enabled: true,
-          blockType: 'permanent',
-          blockUntil: undefined,
-        },
-        durationMs
-      )
-    );
-    mergeAndSave([...reSelectedBlocks, ...stamped]);
-    setShowLockDurationModal(false);
-    setNewAppsToStamp([]);
-    setReSelectedBlocks([]);
+    const blockUntil = Date.now() + duration;
+    const additions: BlockedApp[] = stillEligible.map((app) => stampDisableLock({
+      packageName: app.packageName,
+      appName: app.appName,
+      iconBase64: app.iconBase64,
+      enabled: true,
+      blockType: mode === 'temporary' ? 'timed' : 'permanent',
+      blockUntil: mode === 'temporary' ? blockUntil : undefined,
+    }, mode === 'permanent' ? duration : undefined));
+    setBlockedApps([...existing, ...additions]);
+    confirmationHaptic().catch(() => {});
+    setShowSheet(false);
     navigation.goBack();
   };
 
-  const handleDurationSelect = (durationMs: number | 'permanent') => {
-    // Permanent blocking now lives on its own flow; this path is timed-only.
-    if (durationMs === 'permanent') return;
+  const renderItem = useCallback(({ item }: { item: SelectableApp }) => (
+    <PressableScale
+      containerStyle={styles.fullWidth}
+      accessibilityRole="checkbox"
+      accessibilityLabel={item.appName}
+      accessibilityState={{ checked: item.selected }}
+      onPress={() => toggle(item.packageName)}
+      style={styles.row}
+      pressedStyle={styles.rowPressed}
+    >
+      {item.iconBase64 ? (
+        <Image accessible={false} source={{ uri: `data:image/png;base64,${item.iconBase64}` }} style={styles.icon} />
+      ) : <View style={styles.iconPlaceholder} />}
+      <Text style={styles.appName} numberOfLines={1}>{item.appName}</Text>
+      <View style={[styles.check, item.selected && styles.checkSelected]}>
+        {item.selected ? <CheckIcon size={16} color={colors.onAccent} /> : null}
+      </View>
+    </PressableScale>
+  ), [colors.onAccent, styles, toggle]);
 
-    const blockUntil = Date.now() + durationMs;
-    // Never let a timed block overwrite an existing permanent one — permanent
-    // always wins. (The picker already hides these, but guard the write too.)
-    const permanentPkgs = new Set(
-      getBlockedApps()
-        .filter((a) => a.blockType === 'permanent')
-        .map((a) => a.packageName)
-    );
-    const blockedAppsToAdd = selectedAppsToBlock
-      .filter((a) => !permanentPkgs.has(a.packageName))
-      .map((a) =>
-        stampDisableLock({
-        packageName: a.packageName,
-        appName: a.appName,
-        iconBase64: a.iconBase64,
-        enabled: true,
-        blockType: 'timed',
-        blockUntil,
-      })
-    );
-
-    mergeAndSave(blockedAppsToAdd);
-    setShowDurationModal(false);
-    setSelectedAppsToBlock([]);
-    navigation.goBack();
-  };
-
-  const renderItem = useCallback(
-    ({ item }: { item: AppWithSelected }) => (
-      <AppRow item={item} onToggle={toggleApp} styles={styles} />
-    ),
-    [toggleApp, styles]
-  );
+  const countLabel = `${selected.length} app${selected.length === 1 ? '' : 's'}`;
 
   return (
     <>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <ChevronLeftIcon size={28} color={Colors.text} />
-          </TouchableOpacity>
-          <Text style={styles.title}>Select Apps</Text>
-          <TouchableOpacity onPress={saveAndClose}>
-            <Text style={styles.done}>Done</Text>
-          </TouchableOpacity>
+          <PressableScale accessibilityRole="button" accessibilityLabel="Back" onPress={navigation.goBack} style={styles.back} pressedStyle={styles.rowPressed}>
+            <ChevronLeftIcon size={24} color={colors.label} />
+          </PressableScale>
+          <View style={styles.headerCopy}>
+            <Text style={styles.headerTitle}>Choose apps</Text>
+            <Text style={styles.headerSubtitle}>{mode === 'temporary' ? 'Timed block' : 'Permanent block'}</Text>
+          </View>
+          <View style={styles.back} />
         </View>
 
-        <View style={styles.searchContainer}>
-          <SearchIcon size={16} color={Colors.textTertiary} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search apps..."
-            placeholderTextColor={Colors.textTertiary}
-            value={search}
-            onChangeText={setSearch}
-          />
-        </View>
+        <View style={styles.maxWidth}>
+          <View style={styles.search}>
+            <SearchIcon size={18} color={colors.labelTertiary} />
+            <TextInput
+              accessibilityLabel="Search installed apps"
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search apps"
+              placeholderTextColor={colors.labelTertiary}
+              style={styles.input}
+              returnKeyType="search"
+              autoCorrect={false}
+            />
+          </View>
 
-        {loading ? (
-          <AppListSkeleton />
-        ) : error ? (
-          <ErrorState
-            message="Could not load installed apps."
-            onRetry={loadApps}
-          />
-        ) : (
-          <FlatList
-            style={{ flex: 1 }}
-            data={filtered}
-            renderItem={renderItem}
-            keyExtractor={(item) => item.packageName}
-            initialNumToRender={12}
-            maxToRenderPerBatch={12}
-            windowSize={7}
-            removeClippedSubviews
-            keyboardShouldPersistTaps="handled"
-            ListEmptyComponent={
-              <EmptyState
-                illustration="search"
-                title="No apps found"
-                subtitle={`No apps match "${search}"`}
+          <View style={styles.listWrap}>
+            {loading ? <AppListSkeleton /> : error ? (
+              <ErrorState message="Could not load installed apps." onRetry={loadApps} />
+            ) : (
+              <FlatList
+                data={filtered}
+                renderItem={renderItem}
+                keyExtractor={(item) => item.packageName}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={filtered.length === 0 ? styles.emptyList : styles.listContent}
+                ListEmptyComponent={
+                  <EmptyState
+                    illustration="search"
+                    title={search ? 'No matching apps' : 'No apps left to add'}
+                    subtitle={search ? `Nothing matches “${search}”.` : 'Every eligible app is already blocked.'}
+                  />
+                }
               />
-            }
-          />
-        )}
+            )}
+          </View>
 
-        <TouchableOpacity style={styles.cta} onPress={saveAndClose}>
-          <Text style={styles.ctaText}>Add Selected Apps</Text>
-        </TouchableOpacity>
+          <View style={styles.footer}>
+            <PressableScale
+              containerStyle={styles.fullWidth}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: selected.length === 0 }}
+              disabled={selected.length === 0}
+              onPress={() => setShowSheet(true)}
+              style={styles.continueButton}
+              pressedStyle={styles.continuePressed}
+            >
+              <Text style={styles.continueText}>Continue with {countLabel}</Text>
+            </PressableScale>
+          </View>
+        </View>
       </SafeAreaView>
 
-      <BlockDurationModal
-        visible={showDurationModal}
-        appName={selectedAppsToBlock.length === 1 ? selectedAppsToBlock[0].appName : `${selectedAppsToBlock.length} apps`}
-        onSelect={handleDurationSelect}
-        onCancel={() => {
-          setShowDurationModal(false);
-          setSelectedAppsToBlock([]);
-        }}
-      />
-
-      <LockDurationModal
-        visible={showLockDurationModal}
-        onSelect={handleLockDurationSelect}
-        onCancel={() => {
-          setShowLockDurationModal(false);
-          setNewAppsToStamp([]);
-          setReSelectedBlocks([]);
-        }}
+      <ChoiceSheet
+        visible={showSheet}
+        title={mode === 'temporary' ? 'Choose block duration' : 'Lock removal'}
+        subtitle={mode === 'temporary'
+          ? `${countLabel} will become available when this timer expires.`
+          : `${countLabel} will stay blocked until manually removed after this lock window.`}
+        options={mode === 'temporary' ? timedOptions : permanentOptions}
+        confirmLabel={mode === 'temporary' ? `Block ${countLabel}` : `Add ${countLabel}`}
+        onConfirm={save}
+        onDismiss={() => setShowSheet(false)}
       />
     </>
   );
 };
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: Colors.text,
-  },
-  done: {
-    fontSize: 16,
-    color: Colors.accent,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 16,
-    marginVertical: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: Colors.bgSecondary,
-    gap: 10,
-  },
-  searchInput: {
-    flex: 1,
-    color: Colors.text,
-    fontSize: 15,
-  },
-  appRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.bgSecondary,
-  },
-  icon: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    marginRight: 12,
-  },
-  iconPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: Colors.bgSecondary,
-    marginRight: 12,
-  },
-  appInfo: {
-    flex: 1,
-  },
-  appName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.text,
-    marginBottom: 2,
-  },
-  appPackage: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderWidth: 2,
-    borderColor: Colors.textTertiary,
-    borderRadius: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: Colors.accent,
-    borderColor: Colors.accent,
-  },
-  checkmark: {
-    color: Colors.bg,
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  cta: {
-    backgroundColor: Colors.accent,
-    marginHorizontal: 16,
-    marginVertical: 16,
-    paddingVertical: 16,
-    borderRadius: 24,
-    alignItems: 'center',
-  },
-  ctaText: {
-    color: Colors.bg,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+const makeStyles = (colors: Palette) => StyleSheet.create({
+  safe: { flex: 1, backgroundColor: colors.background },
+  header: { height: 60, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  back: { width: 48, minHeight: 48, borderRadius: Radius.pill, alignItems: 'center' },
+  headerCopy: { alignItems: 'center' },
+  headerTitle: { ...Type.bodyStrong, color: colors.label },
+  headerSubtitle: { ...Type.footnote, color: colors.labelSecondary },
+  maxWidth: { flex: 1, width: '100%', maxWidth: 680, alignSelf: 'center' },
+  search: { minHeight: 48, marginHorizontal: Spacing.lg, marginVertical: Spacing.sm, paddingHorizontal: Spacing.lg, borderRadius: Radius.md, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  input: { flex: 1, ...Type.body, color: colors.label, paddingVertical: 0 },
+  listWrap: { flex: 1 },
+  listContent: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg },
+  emptyList: { flexGrow: 1, justifyContent: 'center' },
+  fullWidth: { width: '100%' },
+  row: { minHeight: 68, paddingHorizontal: Spacing.xs, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.separator },
+  rowPressed: { backgroundColor: colors.surfacePressed },
+  icon: { width: 44, height: 44, borderRadius: 11, marginRight: Spacing.md },
+  iconPlaceholder: { width: 44, height: 44, borderRadius: 11, marginRight: Spacing.md, backgroundColor: colors.surfacePressed },
+  appName: { ...Type.bodyStrong, color: colors.label, flex: 1 },
+  check: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, borderColor: colors.labelTertiary, alignItems: 'center', justifyContent: 'center' },
+  checkSelected: { backgroundColor: colors.accent, borderColor: colors.accent },
+  footer: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.sm, backgroundColor: colors.background },
+  continueButton: { minHeight: 54, borderRadius: Radius.pill, backgroundColor: colors.accent, alignItems: 'center' },
+  continuePressed: { backgroundColor: colors.accent },
+  continueText: { ...Type.bodyStrong, color: colors.onAccent },
 });

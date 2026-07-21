@@ -1,6 +1,6 @@
 # How to Build & Install — Locked
 
-The `Locked` app uses **custom native Kotlin modules** (permissions, app-blocker, step-counter, prevention-mode) and custom Android components (accessibility service, device-admin receiver). Because of that:
+The `Locked` app uses **custom native Kotlin modules** (permissions, app-blocker, prevention-mode) and custom Android components (accessibility service, device-admin receiver). Because of that:
 
 - **Expo Go cannot run this app.** It only runs pure-JS projects. You must build a real APK.
 - All native fixes require a **rebuild** — Metro reload alone is not enough.
@@ -13,7 +13,7 @@ You need the Android SDK + a JDK. Android Studio bundles a usable JDK (JBR).
 
 ```bash
 export ANDROID_HOME=~/Library/Android/sdk
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export JAVA_HOME="$(dirname "$(dirname "$(command -v java)")")"
 ```
 
 Add those to your `~/.zshrc` so every shell has them.

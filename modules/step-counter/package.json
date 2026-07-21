@@ -1,8 +1,0 @@
-{
-  "name": "step-counter",
-  "version": "1.0.0",
-  "description": "Step counter module",
-  "main": "src/index.ts",
-  "types": "src/index.d.ts",
-  "source": "src/index.ts"
-}

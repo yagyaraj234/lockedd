@@ -46,6 +46,9 @@ class BlockingActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (LATENCY_LOG) {
+            android.util.Log.d("BlockLatency", "onCreate t=${System.currentTimeMillis()}")
+        }
         setContentView(
             buildLayout(),
             ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -236,7 +239,7 @@ class BreathingOrbView(context: Context) : View(context) {
         for (i in 4 downTo 1) {
             val haloR = coreR + (i * maxR * 0.085f * breathScale)
             val alpha = (42 - i * 9).coerceAtLeast(0)
-            paint.color = Color.argb(alpha, 124, 58, 237)
+            paint.color = Color.argb(alpha, 183, 217, 91)
             paint.style = Paint.Style.FILL
             canvas.drawCircle(cx, cy, haloR, paint)
         }
@@ -245,9 +248,9 @@ class BreathingOrbView(context: Context) : View(context) {
         paint.shader = RadialGradient(
             cx, cy - coreR * 0.08f, coreR,
             intArrayOf(
-                Color.parseColor("#DDD6FE"),
-                Color.parseColor("#8B5CF6"),
-                Color.parseColor("#3B1C72")
+                Color.parseColor("#ECF8C2"),
+                Color.parseColor("#B7D95B"),
+                Color.parseColor("#4B6120")
             ),
             floatArrayOf(0f, 0.48f, 1f),
             Shader.TileMode.CLAMP

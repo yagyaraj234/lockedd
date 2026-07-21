@@ -5,11 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "plugins": [
       "./modules/permissions/app.plugin.js",
       "./modules/app-blocker/app.plugin.js",
-      "./modules/step-counter/app.plugin.js",
       "./modules/prevention-mode/app.plugin.js"
     ],
     "ios": {

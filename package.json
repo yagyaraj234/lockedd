@@ -7,6 +7,8 @@
     "@react-navigation/native": "^7.3.1",
     "@react-navigation/stack": "^7.10.3",
     "expo": "~56.0.11",
+    "expo-blur": "~56.0.3",
+    "expo-haptics": "~56.0.3",
     "expo-status-bar": "~56.0.4",
     "react": "19.2.3",
     "react-native": "0.85.3",
@@ -26,7 +28,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "build:android": "export JAVA_HOME=\"/Applications/Android Studio.app/Contents/jbr/Contents/Home\" && cd android && ./gradlew assembleRelease && cp app/build/outputs/apk/release/app-release.apk ../locked.apk && echo '✓ APK created: locked.apk' && ls -lh ../locked.apk && adb devices 2>/dev/null | grep -q 'device$' && echo '→ Device connected. Run: npm run install:android' || echo '→ No device. Copy locked.apk to phone or: adb install -r locked.apk'",
+    "test:logic": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/domain.test.mts",
+    "build:android": "export NODE_ENV=production JAVA_HOME=\"$(dirname \"$(dirname \"$(command -v java)\")\")\" && cd android && ./gradlew assembleRelease && cp app/build/outputs/apk/release/app-release.apk ../locked.apk && echo '✓ APK created: locked.apk' && ls -lh ../locked.apk && { if adb devices 2>/dev/null | grep -q 'device$'; then echo '→ Device connected. Run: npm run install:android'; else echo '→ No device. Copy locked.apk to phone or: adb install -r locked.apk'; fi; }",
     "install:android": "adb install -r locked.apk && adb shell pm grant com.yagyaraj.locked android.permission.WRITE_SECURE_SETTINGS && echo '✓ Installed + WRITE_SECURE_SETTINGS granted. Launch app and grant permissions:' && echo '  1. Accessibility: Settings > Accessibility > Locked > On (re-grant if you had it before — config changed)' && echo '  2. Display over other apps: allow' && echo '  3. Add apps to block'"
   },
   "private": true

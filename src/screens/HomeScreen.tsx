@@ -1,234 +1,278 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from '../theme';
 import type { Palette } from '../colors';
-import { getBlockedApps, BlockedApp } from '../store/storage';
-import { AppBlocker } from '../../modules/app-blocker/src';
-import { ShieldIcon, GearIcon, PlusIcon } from '../components/icons';
+import { Radius, Spacing, Type } from '../colors';
 import { EmptyState } from '../components/EmptyState';
 import { HomeMetrics } from '../components/HomeMetrics';
+import { PressableScale } from '../components/PressableScale';
+import { ChevronRightIcon, PlusIcon } from '../components/icons';
+import { PhoneLockTimerSheet } from '../components/PhoneLockTimerSheet';
+import { usePermissions } from '../hooks/usePermissions';
+import { formatPhoneLockCountdown, formatPhoneLockDuration } from '../domain';
+import {
+  AppBlocker,
+  type PhoneLockState,
+} from '../../modules/app-blocker/src';
+import { getBlockedApps, type BlockedApp } from '../store/storage';
+import { useTheme } from '../theme';
 
 const formatTimeRemaining = (blockUntil: number) => {
-  const now = Date.now();
-  const remaining = Math.max(0, blockUntil - now);
+  const remaining = Math.max(0, blockUntil - Date.now());
   if (remaining === 0) return 'Expired';
+  const hours = Math.floor(remaining / 3_600_000);
+  const minutes = Math.floor((remaining % 3_600_000) / 60_000);
+  return hours > 0 ? `${hours}h ${minutes}m left` : `${Math.max(1, minutes)}m left`;
+};
 
-  const hours = Math.floor(remaining / (60 * 60 * 1000));
-  const minutes = Math.floor((remaining % (60 * 60 * 1000)) / (60 * 1000));
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m remaining`;
-  }
-  return `${minutes}m remaining`;
+const emptyPhoneLock: PhoneLockState = {
+  active: false,
+  endsAt: null,
+  passEndsAt: null,
+  passesRemaining: 0,
 };
 
 export const HomeScreen = ({ navigation }: any) => {
-  const { colors: Colors } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+  const permissions = usePermissions();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const [blockedApps, setBlockedApps] = useState<BlockedApp[]>([]);
   const [stats, setStats] = useState({ totalAttempts: 0, todayAttempts: 0 });
+  const [phoneLock, setPhoneLock] = useState<PhoneLockState>(emptyPhoneLock);
+  const [showPhoneLockSheet, setShowPhoneLockSheet] = useState(false);
   const [, setTick] = useState(0);
 
-  // Block-attempt stats live in native shared prefs (written by the
-  // accessibility service). try/catch keeps an old APK without the native
-  // method from crashing Home.
-  const loadStats = () => {
+  const refresh = useCallback(() => {
+    setBlockedApps(getBlockedApps().filter((app) => app.blockType === 'timed' && (app.blockUntil ?? 0) > Date.now()));
     try {
       setStats(AppBlocker.getBlockStats());
     } catch {
-      // Native method missing (pre-rebuild) — leave zeros.
+      setStats({ totalAttempts: 0, todayAttempts: 0 });
     }
-  };
-
-  const refresh = () => {
-    setBlockedApps(
-      getBlockedApps().filter(
-        (a) => a.blockType === 'timed' && (a.blockUntil == null || a.blockUntil > Date.now())
-      )
-    );
-    loadStats();
-  };
-
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      refresh();
-    });
-    return unsubscribe;
-  }, [navigation]);
-
-  // Tick every 60s so countdowns update while the screen is open; also re-read
-  // stats so saved-time stays live if a block fires while Home is foregrounded.
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTick((prev) => prev + 1);
-      loadStats();
-    }, 60000);
-    return () => clearInterval(interval);
+    try {
+      setPhoneLock(AppBlocker.getPhoneLockState());
+    } catch {
+      setPhoneLock(emptyPhoneLock);
+    }
   }, []);
 
+  useEffect(() => navigation.addListener('focus', refresh), [navigation, refresh]);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTick((value) => value + 1);
+      refresh();
+    }, phoneLock.active ? 1_000 : 60_000);
+    return () => clearInterval(interval);
+  }, [refresh, phoneLock.active]);
+
+  const beginBlock = () => {
+    if (!permissions.coreReady) {
+      navigation.navigate('Permissions');
+      return;
+    }
+    navigation.navigate('AddApps', { mode: 'temporary' });
+  };
+
+  const beginPhoneLock = () => {
+    if (!permissions.coreReady) {
+      navigation.navigate('Permissions');
+      return;
+    }
+    setShowPhoneLockSheet(true);
+  };
+
+  const confirmPhoneLock = (durationMs: number) => {
+    setShowPhoneLockSheet(false);
+    const durationLabel = formatPhoneLockDuration(durationMs);
+    const endsAt = new Date(Date.now() + durationMs).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    Alert.alert(
+      `Lock phone for ${durationLabel}?`,
+      `Ends at ${endsAt}. You get three 2-minute passes, and Phone stays available. This cannot be stopped early.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Start lock',
+          onPress: () => {
+            try {
+              AppBlocker.startPhoneLock(durationMs);
+            } catch {
+              Alert.alert('Could not start phone lock', 'Check blocking permissions and rebuild the native app.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const now = Date.now();
+  const passActive = phoneLock.passEndsAt != null && phoneLock.passEndsAt > now;
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Text style={styles.title}>Locked</Text>
-        <View style={styles.headerIcons}>
-          <TouchableOpacity onPress={() => navigation.navigate('BlockedApps')}>
-            <ShieldIcon size={24} color={Colors.text} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
-            <GearIcon size={24} color={Colors.text} />
-          </TouchableOpacity>
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.lg }]}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.maxWidth}>
+        <Text style={styles.brand}>LOCKED</Text>
+        <Text style={styles.largeTitle}>Today</Text>
+
+        {!permissions.loading && !permissions.coreReady ? (
+          <View style={styles.setupCard}>
+            <View style={styles.setupCopy}>
+              <Text style={styles.setupTitle}>Finish blocking setup</Text>
+              <Text style={styles.setupBody}>Allow Accessibility and Draw over apps before adding a block.</Text>
+            </View>
+            <PressableScale
+              accessibilityRole="button"
+              accessibilityLabel="Finish blocking setup"
+              onPress={() => navigation.navigate('Permissions')}
+              style={styles.setupAction}
+              pressedStyle={styles.pressed}
+            >
+              <ChevronRightIcon size={20} color={colors.onAccent} />
+            </PressableScale>
+          </View>
+        ) : null}
+
+        <View style={styles.metricsWrap}>
+          <HomeMetrics totalAttempts={stats.totalAttempts} todayAttempts={stats.todayAttempts} />
         </View>
-      </View>
 
-      <HomeMetrics
-        totalAttempts={stats.totalAttempts}
-        todayAttempts={stats.todayAttempts}
-      />
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Phone lock</Text>
+          {phoneLock.active ? <Text style={styles.sectionCount}>ACTIVE</Text> : null}
+        </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>TEMPORARILY BLOCKED</Text>
+        <View style={[styles.phoneLock, phoneLock.active && styles.phoneLockActive]}>
+          {phoneLock.active ? (
+            <>
+              <Text style={styles.phoneLockKicker}>{passActive ? '2-MINUTE PASS' : 'PHONE LOCKED'}</Text>
+              <Text style={styles.phoneLockCountdown}>
+                {formatPhoneLockCountdown(passActive ? phoneLock.passEndsAt : phoneLock.endsAt, now)}
+              </Text>
+              <Text style={styles.phoneLockBody}>
+                {passActive
+                  ? `Full phone available now · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`
+                  : `Phone stays available · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`}
+              </Text>
+              {passActive ? (
+                <Text style={styles.phoneLockEnd}>
+                  Phone lock ends in {formatPhoneLockCountdown(phoneLock.endsAt, now)}
+                </Text>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <Text style={styles.phoneLockKicker}>DEEP FOCUS</Text>
+              <Text style={styles.phoneLockTitle}>Lock your phone</Text>
+              <Text style={styles.phoneLockBody}>Only Phone and three 2-minute passes stay available.</Text>
+              <PressableScale
+                accessibilityRole="button"
+                accessibilityLabel="Choose phone lock duration"
+                onPress={beginPhoneLock}
+                style={styles.phoneLockAction}
+                pressedStyle={styles.phoneLockActionPressed}
+              >
+                <Text style={styles.phoneLockActionText}>Choose time</Text>
+                <ChevronRightIcon size={19} color={colors.onAccent} />
+              </PressableScale>
+            </>
+          )}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Timed blocks</Text>
+          {blockedApps.length > 0 ? <Text style={styles.sectionCount}>{blockedApps.length}</Text> : null}
+        </View>
+
         {blockedApps.length === 0 ? (
           <EmptyState
             illustration="shield"
-            title="Nothing blocked yet"
-            subtitle="Block apps for a set time to keep distractions out."
-            actionLabel="Block an app"
-            onAction={() => navigation.navigate('AddApps', { mode: 'temporary' })}
+            title="No timed blocks"
+            subtitle="Choose a distraction and give your attention some room."
+            actionLabel={permissions.coreReady ? 'Block an app' : undefined}
+            onAction={permissions.coreReady ? beginBlock : undefined}
           />
         ) : (
-          <View style={styles.appGrid}>
-            {blockedApps.map((app) => (
-              <View key={app.packageName} style={styles.appCard}>
-                {app.iconBase64 ? (
-                  <Image
-                    source={{ uri: `data:image/png;base64,${app.iconBase64}` }}
-                    style={styles.appIcon}
-                  />
-                ) : (
-                  <View style={styles.appIconPlaceholder} />
-                )}
-                <Text style={styles.appCardName} numberOfLines={2}>
-                  {app.appName}
-                </Text>
-                {app.blockUntil != null && (
-                  <View style={styles.timerChip}>
-                    <Text style={styles.timerChipText} numberOfLines={1}>
-                      {formatTimeRemaining(app.blockUntil)}
-                    </Text>
+          <>
+            <View style={styles.list}>
+              {blockedApps.map((app, index) => (
+                <View key={app.packageName}>
+                  <View style={styles.row}>
+                    {app.iconBase64 ? (
+                      <Image source={{ uri: `data:image/png;base64,${app.iconBase64}` }} style={styles.icon} />
+                    ) : <View style={styles.iconPlaceholder} />}
+                    <View style={styles.rowCopy}>
+                      <Text style={styles.appName} numberOfLines={1}>{app.appName}</Text>
+                      <Text style={styles.remaining}>{formatTimeRemaining(app.blockUntil!)}</Text>
+                    </View>
                   </View>
-                )}
-              </View>
-            ))}
-          </View>
+                  {index < blockedApps.length - 1 ? <View style={styles.separator} /> : null}
+                </View>
+              ))}
+            </View>
+            <PressableScale
+              containerStyle={styles.fullWidth}
+              accessibilityRole="button"
+              onPress={beginBlock}
+              style={styles.addButton}
+              pressedStyle={styles.pressed}
+            >
+              <PlusIcon size={18} color={colors.accent} />
+              <Text style={styles.addText}>Add timed block</Text>
+            </PressableScale>
+          </>
         )}
       </View>
-
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => navigation.navigate('AddApps', { mode: 'temporary' })}
-      >
-        <PlusIcon size={18} color={Colors.accent} />
-        <Text style={styles.addButtonText}>Block temporarily</Text>
-      </TouchableOpacity>
+      <PhoneLockTimerSheet
+        visible={showPhoneLockSheet}
+        onConfirm={confirmPhoneLock}
+        onDismiss={() => setShowPhoneLockSheet(false)}
+      />
     </ScrollView>
   );
 };
 
-const makeStyles = (Colors: Palette) => StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: Colors.text,
-  },
-  headerIcons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 20,
-  },
-  section: {
-    paddingHorizontal: 16,
-    marginTop: 24,
-  },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.textTertiary,
-    marginBottom: 14,
-    letterSpacing: 1.2,
-  },
-  appGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  appCard: {
-    width: '48%',
-    backgroundColor: Colors.bgSecondary,
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-  },
-  appIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  appIconPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 12,
-    backgroundColor: Colors.bgDark,
-    marginBottom: 8,
-  },
-  appCardName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.text,
-    textAlign: 'center',
-  },
-  timerChip: {
-    backgroundColor: Colors.accentSoft,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    marginTop: 6,
-    alignSelf: 'stretch',
-  },
-  timerChipText: {
-    fontSize: 11,
-    color: Colors.accent,
-    textAlign: 'center',
-    fontWeight: '600',
-  },
-  addButton: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
-    borderColor: Colors.accent,
-    borderRadius: 24,
-    marginHorizontal: 16,
-    marginVertical: 24,
-    paddingVertical: 16,
-  },
-  addButtonText: {
-    color: Colors.accent,
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+const makeStyles = (colors: Palette) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.background },
+  content: { paddingHorizontal: Spacing.lg, paddingBottom: 120, alignItems: 'center' },
+  maxWidth: { width: '100%', maxWidth: 680 },
+  brand: { ...Type.footnoteStrong, color: colors.accent, letterSpacing: 1.2 },
+  largeTitle: { ...Type.largeTitle, color: colors.label, marginTop: 2 },
+  setupCard: { marginTop: Spacing.xl, padding: Spacing.lg, borderRadius: Radius.lg, backgroundColor: colors.accentMuted, flexDirection: 'row', alignItems: 'center', gap: Spacing.lg },
+  setupCopy: { flex: 1 },
+  setupTitle: { ...Type.bodyStrong, color: colors.label },
+  setupBody: { ...Type.footnote, color: colors.labelSecondary, marginTop: 3 },
+  setupAction: { width: 48, minHeight: 48, borderRadius: Radius.pill, alignItems: 'center', backgroundColor: colors.accent },
+  metricsWrap: { marginTop: Spacing.xl },
+  sectionHeader: { marginTop: Spacing.xxl, marginBottom: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  sectionTitle: { ...Type.title, color: colors.label },
+  sectionCount: { ...Type.footnoteStrong, color: colors.accent, backgroundColor: colors.accentMuted, paddingHorizontal: 8, paddingVertical: 2, borderRadius: Radius.pill },
+  phoneLock: { borderRadius: Radius.lg, backgroundColor: colors.surface, padding: Spacing.xl },
+  phoneLockActive: { backgroundColor: colors.accentMuted, borderWidth: 1, borderColor: colors.accent },
+  phoneLockKicker: { ...Type.footnoteStrong, color: colors.accent, letterSpacing: 0.9 },
+  phoneLockTitle: { ...Type.title, color: colors.label, marginTop: Spacing.sm },
+  phoneLockCountdown: { fontSize: 38, lineHeight: 44, fontWeight: '700', letterSpacing: -0.6, color: colors.label, marginTop: Spacing.sm },
+  phoneLockBody: { ...Type.body, color: colors.labelSecondary, marginTop: Spacing.sm, maxWidth: 520 },
+  phoneLockEnd: { ...Type.footnote, color: colors.labelSecondary, marginTop: Spacing.xs },
+  phoneLockAction: { alignSelf: 'flex-start', minHeight: 50, marginTop: Spacing.xl, paddingHorizontal: Spacing.lg, borderRadius: Radius.pill, backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  phoneLockActionPressed: { backgroundColor: colors.accent },
+  phoneLockActionText: { ...Type.bodyStrong, color: colors.onAccent },
+  list: { backgroundColor: colors.surface, borderRadius: Radius.lg, overflow: 'hidden' },
+  row: { minHeight: 72, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, flexDirection: 'row', alignItems: 'center' },
+  icon: { width: 44, height: 44, borderRadius: 11, marginRight: Spacing.md },
+  iconPlaceholder: { width: 44, height: 44, borderRadius: 11, marginRight: Spacing.md, backgroundColor: colors.surfacePressed },
+  rowCopy: { flex: 1 },
+  appName: { ...Type.bodyStrong, color: colors.label },
+  remaining: { ...Type.footnote, color: colors.accent, marginTop: 2 },
+  separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginLeft: 72 },
+  fullWidth: { width: '100%' },
+  addButton: { marginTop: Spacing.md, borderRadius: Radius.pill, borderWidth: 1, borderColor: colors.separator, backgroundColor: colors.surface, alignItems: 'center', flexDirection: 'row', gap: Spacing.sm },
+  addText: { ...Type.bodyStrong, color: colors.accent },
+  pressed: { backgroundColor: colors.surfacePressed },
 });
