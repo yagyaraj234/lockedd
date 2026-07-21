@@ -10,6 +10,15 @@ export interface BlockedAppEntry {
   blockUntil: number | null;
 }
 
+export type PhoneLockDurationMs = number;
+
+export interface PhoneLockState {
+  active: boolean;
+  endsAt: number | null;
+  passEndsAt: number | null;
+  passesRemaining: number;
+}
+
 export declare const AppBlocker: {
   getInstalledApps(): Promise<InstalledApp[]>;
   isAccessibilityEnabled(): Promise<boolean>;
@@ -18,4 +27,6 @@ export declare const AppBlocker: {
   hasWriteSecureSettings(): boolean;
   getPrivateDns(): { mode: string; specifier: string };
   getBlockStats(): { totalAttempts: number; todayAttempts: number };
+  startPhoneLock(durationMs: PhoneLockDurationMs): PhoneLockState;
+  getPhoneLockState(): PhoneLockState;
 };

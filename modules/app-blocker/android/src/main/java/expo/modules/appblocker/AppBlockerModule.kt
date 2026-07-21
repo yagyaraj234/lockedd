@@ -22,6 +22,17 @@ class BlockedAppEntry : Record {
 }
 
 class AppBlockerModule : Module() {
+  companion object {
+    private const val PHONE_LOCK_END = "phone_lock_end"
+    private const val PHONE_LOCK_PASS_END = "phone_lock_pass_end"
+    private const val PHONE_LOCK_PASSES_REMAINING = "phone_lock_passes_remaining"
+    private const val PHONE_LOCK_CHANGED_ACTION = "com.yagyaraj.locked.PHONE_LOCK_CHANGED"
+    private const val PHONE_LOCK_MIN_DURATION_MS = 5 * 60 * 1000L
+    private const val PHONE_LOCK_MAX_DURATION_MS = 24 * 60 * 60 * 1000L
+    private const val PHONE_LOCK_DURATION_STEP_MS = 5 * 60 * 1000L
+    private const val PHONE_LOCK_PASS_COUNT = 3
+  }
+
   private val context: Context
     get() = appContext.reactContext ?: throw Exception("No React context")
 
@@ -173,6 +184,79 @@ class AppBlockerModule : Module() {
       }
     }
 
+    Function("startPhoneLock") { durationMs: Double ->
+      val duration = durationMs.toLong()
+      require(
+        durationMs == duration.toDouble() &&
+          duration in PHONE_LOCK_MIN_DURATION_MS..PHONE_LOCK_MAX_DURATION_MS &&
+          duration % PHONE_LOCK_DURATION_STEP_MS == 0L
+      ) {
+        "Phone lock duration must be 5-minute increments from 5 minutes through 24 hours"
+      }
+      check(isAccessibilityServiceEnabled() && android.provider.Settings.canDrawOverlays(context)) {
+        "Accessibility and overlay permissions are required"
+      }
+
+      val prefs = blockerPrefs()
+      val now = System.currentTimeMillis()
+      val currentEnd = prefs.getLong(PHONE_LOCK_END, 0L)
+      check(currentEnd <= now) { "A phone lock is already active" }
+
+      prefs.edit()
+        .putLong(PHONE_LOCK_END, now + duration)
+        .remove(PHONE_LOCK_PASS_END)
+        .putInt(PHONE_LOCK_PASSES_REMAINING, PHONE_LOCK_PASS_COUNT)
+        .apply()
+
+      context.sendBroadcast(
+        Intent(PHONE_LOCK_CHANGED_ACTION).setPackage(context.packageName)
+      )
+      context.startActivity(Intent(Intent.ACTION_MAIN).apply {
+        addCategory(Intent.CATEGORY_HOME)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      })
+
+      getPhoneLockState(prefs, now)
+    }
+
+    Function("getPhoneLockState") {
+      getPhoneLockState(blockerPrefs())
+    }
+
+  }
+
+  private fun getPhoneLockState(
+    prefs: android.content.SharedPreferences,
+    now: Long = System.currentTimeMillis()
+  ): Map<String, Any?> {
+    val endsAt = prefs.getLong(PHONE_LOCK_END, 0L)
+    if (endsAt <= now) {
+      if (endsAt != 0L) {
+        prefs.edit()
+          .remove(PHONE_LOCK_END)
+          .remove(PHONE_LOCK_PASS_END)
+          .remove(PHONE_LOCK_PASSES_REMAINING)
+          .apply()
+      }
+      return mapOf(
+        "active" to false,
+        "endsAt" to null,
+        "passEndsAt" to null,
+        "passesRemaining" to 0
+      )
+    }
+
+    val storedPassEnd = prefs.getLong(PHONE_LOCK_PASS_END, 0L)
+    val passEndsAt = storedPassEnd.takeIf { it > now }
+    if (storedPassEnd != 0L && passEndsAt == null) {
+      prefs.edit().remove(PHONE_LOCK_PASS_END).apply()
+    }
+    return mapOf(
+      "active" to true,
+      "endsAt" to endsAt,
+      "passEndsAt" to passEndsAt,
+      "passesRemaining" to prefs.getInt(PHONE_LOCK_PASSES_REMAINING, 0)
+    )
   }
 
   private fun encodeIconToBase64(drawable: Drawable): String {
