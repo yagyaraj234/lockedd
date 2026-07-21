@@ -13,7 +13,7 @@ You need the Android SDK + a JDK. Android Studio bundles a usable JDK (JBR).
 
 ```bash
 export ANDROID_HOME=~/Library/Android/sdk
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export JAVA_HOME="$(dirname "$(dirname "$(command -v java)")")"
 ```
 
 Add those to your `~/.zshrc` so every shell has them.
