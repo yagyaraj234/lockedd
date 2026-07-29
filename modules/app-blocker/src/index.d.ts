@@ -2,6 +2,8 @@ export interface InstalledApp {
   packageName: string;
   appName: string;
   iconBase64: string;
+  canAllowDuringPhoneLock: boolean;
+  isAlwaysAllowedDuringPhoneLock: boolean;
 }
 
 export interface BlockedAppEntry {
@@ -17,7 +19,24 @@ export interface PhoneLockState {
   endsAt: number | null;
   passEndsAt: number | null;
   passesRemaining: number;
+  cooldownEndsAt: number | null;
+  source: 'manual' | 'schedule' | null;
+  activeScheduleId: string | null;
+  allowedPackageNames: string[];
 }
+
+export interface PhoneLockSchedule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  days: number[];
+  startMinute: number;
+  endMinute: number;
+  allowedPackageNames: string[];
+  activationNotBefore: number | null;
+}
+
+export type PhoneLockScheduleInput = Omit<PhoneLockSchedule, 'activationNotBefore'>;
 
 export declare const AppBlocker: {
   getInstalledApps(): Promise<InstalledApp[]>;
@@ -27,6 +46,15 @@ export declare const AppBlocker: {
   hasWriteSecureSettings(): boolean;
   getPrivateDns(): { mode: string; specifier: string };
   getBlockStats(): { totalAttempts: number; todayAttempts: number };
-  startPhoneLock(durationMs: PhoneLockDurationMs): PhoneLockState;
+  canScheduleExactAlarms(): boolean;
+  openExactAlarmSettings(): boolean;
+  getPhoneLockSchedules(): PhoneLockSchedule[];
+  upsertPhoneLockSchedule(schedule: PhoneLockScheduleInput): PhoneLockSchedule;
+  deletePhoneLockSchedule(id: string): boolean;
+  setPhoneLockScheduleEnabled(id: string, enabled: boolean): PhoneLockSchedule;
+  startPhoneLock(
+    durationMs: PhoneLockDurationMs,
+    allowedPackageNames?: string[]
+  ): PhoneLockState;
   getPhoneLockState(): PhoneLockState;
 };

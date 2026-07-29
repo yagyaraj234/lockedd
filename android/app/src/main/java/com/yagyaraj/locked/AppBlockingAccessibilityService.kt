@@ -33,6 +33,7 @@ import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
 import android.widget.LinearLayout
 import android.widget.TextView
+import expo.modules.appblocker.PhoneLockScheduler
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -55,11 +56,14 @@ object BlockerPrefs {
   const val STATS_TODAY_COUNT = "stats_today_count"
   const val STATS_TODAY_DATE = "stats_today_date"
 
-  const val PHONE_LOCK_END = "phone_lock_end"
-  const val PHONE_LOCK_PASS_END = "phone_lock_pass_end"
-  const val PHONE_LOCK_PASSES_REMAINING = "phone_lock_passes_remaining"
-  const val PHONE_LOCK_CHANGED_ACTION = "com.yagyaraj.locked.PHONE_LOCK_CHANGED"
-  const val PHONE_LOCK_PASS_MS = 2 * 60 * 1000L
+  const val PHONE_LOCK_END = PhoneLockScheduler.PHONE_LOCK_END
+  const val PHONE_LOCK_PASS_END = PhoneLockScheduler.PHONE_LOCK_PASS_END
+  const val PHONE_LOCK_COOLDOWN_END = PhoneLockScheduler.PHONE_LOCK_COOLDOWN_END
+  const val PHONE_LOCK_PASSES_REMAINING = PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING
+  const val PHONE_LOCK_ALLOWED_PACKAGES = PhoneLockScheduler.PHONE_LOCK_ALLOWED_PACKAGES
+  const val PHONE_LOCK_CHANGED_ACTION = PhoneLockScheduler.PHONE_LOCK_CHANGED_ACTION
+  const val PHONE_LOCK_PASS_MS = PhoneLockScheduler.PHONE_LOCK_PASS_MS
+  const val PHONE_LOCK_PASS_COUNT = PhoneLockScheduler.PHONE_LOCK_PASS_COUNT
 
   // Package names for the Android Settings app across major OEMs.
   val SETTINGS_PACKAGES = setOf(
@@ -178,6 +182,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private var overlayHintText: TextView? = null
   private var overlayPrimaryAction: TextView? = null
   private var overlaySecondaryAction: TextView? = null
+  private var overlayAllowedActions: LinearLayout? = null
+  private var renderedAllowedPackages: Set<String> = emptySet()
   private var overlayOrbView: BreathingOrbView? = null
   private var overlayBreathAnimator: ValueAnimator? = null
   private val overlayHandler = Handler(Looper.getMainLooper())
@@ -209,11 +215,13 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   override fun onServiceConnected() {
     super.onServiceConnected()
     try {
-      setupOverlay()
       registerPhoneLockReceiver()
+      PhoneLockScheduler.refresh(this)
       if (BuildConfig.DEBUG) runPhoneLockSelfCheck()
       syncPhoneLockOverlay()
-    } catch (_: Exception) {}
+    } catch (_: Exception) {
+      schedulePhoneLockTick()
+    }
   }
 
   override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -381,6 +389,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   }
 
   private fun setupOverlay() {
+    if (overlayRoot != null) return
     val wm = getSystemService(WINDOW_SERVICE) as WindowManager
     overlayWm = wm
     val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
@@ -514,6 +523,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       }
       setOnClickListener { handlePrimaryAction() }
       contentDescription = "Return Home"
+      isFocusable = true
+      isFocusableInTouchMode = true
     }
     overlayPrimaryAction = primaryAction
     root.addView(primaryAction, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (52 * d).toInt()).apply {
@@ -532,6 +543,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       setPadding((20 * d).toInt(), 0, (20 * d).toInt(), 0)
       setOnClickListener { openPhone() }
       contentDescription = "Open Phone without using a pass"
+      isFocusable = true
+      isFocusableInTouchMode = true
       visibility = View.GONE
     }
     overlaySecondaryAction = secondaryAction
@@ -539,6 +552,20 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       gravity = Gravity.CENTER_HORIZONTAL
       topMargin = (8 * d).toInt()
     })
+
+    val allowedActions = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER_HORIZONTAL
+      visibility = View.GONE
+    }
+    overlayAllowedActions = allowedActions
+    root.addView(
+      allowedActions,
+      LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT
+      )
+    )
 
     root.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.8f))
   }
@@ -556,6 +583,14 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   }
 
   private fun syncPhoneLockOverlay() {
+    if (overlayRoot == null) {
+      try {
+        setupOverlay()
+      } catch (_: Exception) {
+        schedulePhoneLockTick()
+        return
+      }
+    }
     val prefs = getSharedPreferences(BlockerPrefs.FILE, Context.MODE_PRIVATE)
     if (!handlePhoneLock(currentForegroundPackage(), prefs)) {
       onWindowsChanged(prefs)
@@ -570,6 +605,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       clearPhoneLock(prefs)
       return false
     }
+    PhoneLockScheduler.resolveAccessCycle(prefs, now)
 
     if (isKeyguardActive()) {
       hidePhoneLockOverlay()
@@ -583,12 +619,13 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       schedulePhoneLockTick()
       return true
     }
-    if (passEndsAt != 0L) {
-      prefs.edit().remove(BlockerPrefs.PHONE_LOCK_PASS_END).apply()
-    }
-
     val activePackage = foregroundPackage ?: currentForegroundPackage()
-    if (activePackage != null && activePackage in phonePackages()) {
+    val allowedPackages =
+      prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
+    if (
+      activePackage != null &&
+      (activePackage in phonePackages() || activePackage in allowedPackages)
+    ) {
       hidePhoneLockOverlay()
       schedulePhoneLockTick()
       return true
@@ -609,11 +646,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   }
 
   private fun clearPhoneLock(prefs: SharedPreferences) {
-    prefs.edit()
-      .remove(BlockerPrefs.PHONE_LOCK_END)
-      .remove(BlockerPrefs.PHONE_LOCK_PASS_END)
-      .remove(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING)
-      .apply()
+    PhoneLockScheduler.clearActiveLock(prefs)
     overlayHandler.removeCallbacks(phoneLockTick)
     if (overlayMode == OverlayMode.PHONE_LOCK) {
       overlayRunning = false
@@ -638,26 +671,68 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayTitleText?.text = "Phone locked"
     overlayTimerText?.text = formatCountdown(endsAt - now)
     val passes = prefs.getInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, 0)
-    overlayAppText?.text = if (passes == 1) {
-      "1 pass left · 2 minutes"
+    val allowedPackages =
+      prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
+    val cooldownEndsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_COOLDOWN_END, 0L)
+    val coolingDown = cooldownEndsAt > now
+    overlayAppText?.text = if (coolingDown) {
+      "Passes reset in ${formatCountdown(cooldownEndsAt - now)}"
+    } else if (passes == 1) {
+      "1 pass left · 1 minute"
     } else {
-      "$passes passes left · 2 minutes each"
+      "$passes passes left · 1 minute each"
     }
-    overlayHintText?.text = "Phone calls stay available. This lock cannot end early."
-    overlayPrimaryAction?.apply {
-      text = if (passes > 0) "Use a 2-minute pass" else "No passes left"
-      contentDescription = if (passes > 0) {
-        "Use a 2-minute pass, $passes remaining"
-      } else {
-        "No phone passes remaining"
+    overlayHintText?.text =
+      "Phone and allowed apps stay available. This lock cannot end early."
+    overlayAllowedActions?.apply {
+      visibility = if (allowedPackages.isEmpty()) View.GONE else View.VISIBLE
+      if (allowedPackages != renderedAllowedPackages) {
+        renderedAllowedPackages = allowedPackages.toSet()
+        removeAllViews()
+        allowedPackages.sortedBy(::appLabel).forEach { packageName ->
+          addView(
+            TextView(this@AppBlockingAccessibilityService).apply {
+              text = "Open ${appLabel(packageName)}"
+              textSize = 15f
+              setTextColor(Color.parseColor("#B7D95B"))
+              gravity = Gravity.CENTER
+              typeface = Typeface.create("sans-serif", Typeface.BOLD)
+              minHeight = (44 * resources.displayMetrics.density).toInt()
+              contentDescription = "$text without using a pass"
+              setOnClickListener { openAllowedApp(packageName) }
+              isFocusable = true
+              isFocusableInTouchMode = true
+            },
+            LinearLayout.LayoutParams(
+              ViewGroup.LayoutParams.WRAP_CONTENT,
+              (44 * resources.displayMetrics.density).toInt()
+            )
+          )
+        }
       }
-      isEnabled = passes > 0
-      alpha = if (passes > 0) 1f else 0.45f
+    }
+    overlayPrimaryAction?.apply {
+      text = if (coolingDown) {
+        "Cooldown · ${formatCountdown(cooldownEndsAt - now)}"
+      } else if (passes > 0) {
+        "Use a 1-minute pass"
+      } else {
+        "No passes available"
+      }
+      contentDescription = if (coolingDown) {
+        "Phone pass cooldown, ${formatCountdown(cooldownEndsAt - now)} remaining"
+      } else if (passes > 0) {
+        "Use a 1-minute pass, $passes remaining"
+      } else {
+        "No phone passes available"
+      }
+      isEnabled = passes > 0 && !coolingDown
+      alpha = if (isEnabled) 1f else 0.45f
     }
     overlaySecondaryAction?.visibility = View.VISIBLE
     overlayRoot?.visibility = View.VISIBLE
-    overlayRoot?.requestFocus()
     if (!wasVisible) {
+      overlayPrimaryAction?.requestFocus()
       if (animationsEnabled()) {
         runOverlayBreathingPhase(0)
       } else {
@@ -681,8 +756,15 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private fun usePhonePass() {
     val prefs = getSharedPreferences(BlockerPrefs.FILE, Context.MODE_PRIVATE)
     val now = System.currentTimeMillis()
+    PhoneLockScheduler.resolveAccessCycle(prefs, now)
     val endsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_END, 0L)
     val remaining = prefs.getInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, 0)
+    if (
+      prefs.getLong(BlockerPrefs.PHONE_LOCK_PASS_END, 0L) > now ||
+      prefs.getLong(BlockerPrefs.PHONE_LOCK_COOLDOWN_END, 0L) > now
+    ) {
+      return
+    }
     val next = nextPhonePass(now, endsAt, remaining) ?: return
     prefs.edit()
       .putInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, next.first)
@@ -702,22 +784,35 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private fun runPhoneLockSelfCheck() {
     val now = 1_000L
     val endsAt = now + 60 * 60 * 1000L
-    var remaining = 3
-    repeat(3) { index ->
+    var remaining = BlockerPrefs.PHONE_LOCK_PASS_COUNT
+    repeat(BlockerPrefs.PHONE_LOCK_PASS_COUNT) { index ->
       val next = checkNotNull(nextPhonePass(now, endsAt, remaining))
       remaining = next.first
-      check(remaining == 2 - index)
+      check(remaining == 1 - index)
       check(next.second == now + BlockerPrefs.PHONE_LOCK_PASS_MS)
     }
     check(remaining == 0)
     check(nextPhonePass(now, endsAt, remaining) == null)
-    check(nextPhonePass(endsAt, endsAt, 3) == null)
+    check(nextPhonePass(endsAt, endsAt, BlockerPrefs.PHONE_LOCK_PASS_COUNT) == null)
     check(isPhoneLockExpired(endsAt, endsAt))
     check(!isPhoneLockExpired(now, endsAt))
   }
 
   private fun openPhone() {
     val intent = Intent(Intent.ACTION_DIAL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+      hidePhoneLockOverlay()
+      startActivity(intent)
+      schedulePhoneLockTick()
+    } catch (_: Exception) {
+      syncPhoneLockOverlay()
+    }
+  }
+
+  private fun openAllowedApp(packageName: String) {
+    val intent = packageManager.getLaunchIntentForPackage(packageName)
+      ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      ?: return
     try {
       hidePhoneLockOverlay()
       startActivity(intent)

@@ -28,7 +28,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "test": "npm run test:coverage",
     "test:logic": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/domain.test.mts",
+    "test:coverage": "node --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/domain.test.mts",
     "build:android": "export NODE_ENV=production JAVA_HOME=\"$(dirname \"$(dirname \"$(command -v java)\")\")\" && cd android && ./gradlew assembleRelease && cp app/build/outputs/apk/release/app-release.apk ../locked.apk && echo '✓ APK created: locked.apk' && ls -lh ../locked.apk && { if adb devices 2>/dev/null | grep -q 'device$'; then echo '→ Device connected. Run: npm run install:android'; else echo '→ No device. Copy locked.apk to phone or: adb install -r locked.apk'; fi; }",
     "install:android": "adb install -r locked.apk && adb shell pm grant com.yagyaraj.locked android.permission.WRITE_SECURE_SETTINGS && echo '✓ Installed + WRITE_SECURE_SETTINGS granted. Launch app and grant permissions:' && echo '  1. Accessibility: Settings > Accessibility > Locked > On (re-grant if you had it before — config changed)' && echo '  2. Display over other apps: allow' && echo '  3. Add apps to block'"
   },

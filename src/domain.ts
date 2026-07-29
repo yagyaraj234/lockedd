@@ -5,6 +5,222 @@ export type CorePermissionStatuses = {
   overlay: boolean;
 };
 
+export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export type PhoneLockSchedule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  days: Weekday[];
+  startMinute: number;
+  endMinute: number;
+  allowedPackageNames: string[];
+  activationNotBefore: number | null;
+};
+
+export type PhoneLockAccessState = {
+  endsAt: number;
+  passEndsAt: number | null;
+  passesRemaining: number;
+  cooldownEndsAt: number | null;
+};
+
+export type PhoneLockScheduleOccurrence = {
+  schedule: PhoneLockSchedule;
+  startsAt: Date;
+  endsAt: Date;
+};
+
+export const PHONE_LOCK_PASS_COUNT = 2;
+export const PHONE_LOCK_PASS_MS = 60_000;
+export const PHONE_LOCK_COOLDOWN_MS = 5 * 60_000;
+
+const MINUTES_PER_DAY = 24 * 60;
+const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
+
+const scheduleIntervals = (schedule: PhoneLockSchedule): Array<[number, number]> =>
+  schedule.days.flatMap((day) => {
+    const start = day * MINUTES_PER_DAY + schedule.startMinute;
+    const duration =
+      schedule.endMinute > schedule.startMinute
+        ? schedule.endMinute - schedule.startMinute
+        : MINUTES_PER_DAY - schedule.startMinute + schedule.endMinute;
+    const end = start + duration;
+    return end <= MINUTES_PER_WEEK
+      ? [[start, end]]
+      : [[start, MINUTES_PER_WEEK], [0, end - MINUTES_PER_WEEK]];
+  });
+
+export const getPhoneLockScheduleValidationError = (
+  schedule: PhoneLockSchedule,
+  existingSchedules: PhoneLockSchedule[]
+): string | null => {
+  if (schedule.days.length === 0) return 'Choose at least one day';
+  if (
+    !Number.isInteger(schedule.startMinute) ||
+    !Number.isInteger(schedule.endMinute) ||
+    schedule.startMinute < 0 ||
+    schedule.startMinute >= MINUTES_PER_DAY ||
+    schedule.endMinute < 0 ||
+    schedule.endMinute >= MINUTES_PER_DAY
+  ) {
+    return 'Enter valid start and end times';
+  }
+  if (schedule.startMinute === schedule.endMinute) {
+    return 'Start and end times must differ';
+  }
+  if (new Set(schedule.allowedPackageNames).size > 5) {
+    return 'Choose up to 5 allowed apps';
+  }
+  if (!schedule.enabled) return null;
+  const intervals = scheduleIntervals(schedule);
+  const conflict = existingSchedules.find(
+    (existing) =>
+      existing.enabled &&
+      existing.id !== schedule.id &&
+      scheduleIntervals(existing).some(([existingStart, existingEnd]) =>
+        intervals.some(([start, end]) => start < existingEnd && existingStart < end)
+      )
+  );
+  return conflict ? `Schedule overlaps ${conflict.name || 'another schedule'}` : null;
+};
+
+const occurrenceStartingOn = (
+  schedule: PhoneLockSchedule,
+  startDay: Date
+): PhoneLockScheduleOccurrence => {
+  const startsAt = new Date(startDay);
+  startsAt.setHours(
+    Math.floor(schedule.startMinute / 60),
+    schedule.startMinute % 60,
+    0,
+    0
+  );
+  const endsAt = new Date(startsAt);
+  if (schedule.endMinute <= schedule.startMinute) endsAt.setDate(endsAt.getDate() + 1);
+  endsAt.setHours(
+    Math.floor(schedule.endMinute / 60),
+    schedule.endMinute % 60,
+    0,
+    0
+  );
+  return { schedule, startsAt, endsAt };
+};
+
+export const getActivePhoneLockSchedule = (
+  schedules: PhoneLockSchedule[],
+  now: Date = new Date()
+): PhoneLockScheduleOccurrence | null => {
+  for (const schedule of schedules) {
+    if (!schedule.enabled) continue;
+    for (const dayOffset of [0, -1]) {
+      const startDay = new Date(now);
+      startDay.setDate(startDay.getDate() + dayOffset);
+      if (!schedule.days.includes(startDay.getDay() as Weekday)) continue;
+      const occurrence = occurrenceStartingOn(schedule, startDay);
+      if (
+        occurrence.startsAt.getTime() <= now.getTime() &&
+        now.getTime() < occurrence.endsAt.getTime() &&
+        (schedule.activationNotBefore == null ||
+          occurrence.startsAt.getTime() >= schedule.activationNotBefore)
+      ) {
+        return occurrence;
+      }
+    }
+  }
+  return null;
+};
+
+export const getManualPhoneLockConflict = (
+  schedules: PhoneLockSchedule[],
+  startsAt: Date,
+  endsAt: Date
+): PhoneLockScheduleOccurrence | null => {
+  const firstDay = new Date(startsAt);
+  firstDay.setHours(0, 0, 0, 0);
+  firstDay.setDate(firstDay.getDate() - 1);
+  const lastDay = new Date(endsAt);
+  lastDay.setHours(0, 0, 0, 0);
+  lastDay.setDate(lastDay.getDate() + 1);
+  let earliest: PhoneLockScheduleOccurrence | null = null;
+
+  for (const schedule of schedules) {
+    if (!schedule.enabled) continue;
+    for (
+      const day = new Date(firstDay);
+      day.getTime() <= lastDay.getTime();
+      day.setDate(day.getDate() + 1)
+    ) {
+      if (!schedule.days.includes(day.getDay() as Weekday)) continue;
+      const occurrence = occurrenceStartingOn(schedule, day);
+      if (
+        schedule.activationNotBefore != null &&
+        occurrence.startsAt.getTime() < schedule.activationNotBefore
+      ) {
+        continue;
+      }
+      if (
+        startsAt.getTime() < occurrence.endsAt.getTime() &&
+        occurrence.startsAt.getTime() < endsAt.getTime() &&
+        (earliest == null ||
+          occurrence.startsAt.getTime() < earliest.startsAt.getTime())
+      ) {
+        earliest = occurrence;
+      }
+    }
+  }
+  return earliest;
+};
+
+export const resolvePhoneLockAccessState = (
+  state: PhoneLockAccessState,
+  now: number = Date.now()
+): PhoneLockAccessState => {
+  if (now >= state.endsAt) {
+    return { ...state, passEndsAt: null, passesRemaining: 0, cooldownEndsAt: null };
+  }
+
+  let next = state;
+  if (state.passEndsAt != null && state.passEndsAt <= now) {
+    next = {
+      ...state,
+      passEndsAt: null,
+      cooldownEndsAt:
+        state.passesRemaining === 0
+          ? Math.min(state.endsAt, state.passEndsAt + PHONE_LOCK_COOLDOWN_MS)
+          : state.cooldownEndsAt,
+    };
+  }
+  if (next.cooldownEndsAt != null && next.cooldownEndsAt <= now) {
+    return {
+      ...next,
+      passesRemaining: PHONE_LOCK_PASS_COUNT,
+      cooldownEndsAt: null,
+    };
+  }
+  return next;
+};
+
+export const requestPhoneLockPass = (
+  state: PhoneLockAccessState,
+  now: number = Date.now()
+): PhoneLockAccessState | null => {
+  const current = resolvePhoneLockAccessState(state, now);
+  if (
+    now >= current.endsAt ||
+    current.passEndsAt != null ||
+    current.cooldownEndsAt != null ||
+    current.passesRemaining <= 0
+  ) {
+    return null;
+  }
+  return {
+    ...current,
+    passEndsAt: Math.min(current.endsAt, now + PHONE_LOCK_PASS_MS),
+    passesRemaining: current.passesRemaining - 1,
+  };
+};
+
 export const migrateThemePreference = (value: unknown): ThemePreference =>
   value === 'dark' || value === 'light' || value === 'system' ? value : 'system';
 

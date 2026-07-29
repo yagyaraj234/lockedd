@@ -7,7 +7,13 @@ import type { PermissionKey, PermissionStatuses } from '../hooks/usePermissions'
 import { CheckIcon } from './icons';
 import { PressableScale } from './PressableScale';
 
-const rows: Array<{ key: PermissionKey; title: string; detail: string; optional?: boolean }> = [
+const rows: Array<{
+  key: PermissionKey;
+  title: string;
+  detail: string;
+  badge?: string;
+  optional?: boolean;
+}> = [
   {
     key: 'accessibility',
     title: 'Accessibility',
@@ -17,6 +23,12 @@ const rows: Array<{ key: PermissionKey; title: string; detail: string; optional?
     key: 'overlay',
     title: 'Draw over apps',
     detail: 'Shows the blocking screen immediately.',
+  },
+  {
+    key: 'exactAlarms',
+    title: 'Alarms & reminders',
+    detail: 'Starts scheduled locks at the exact minute.',
+    badge: 'SCHEDULES',
   },
   {
     key: 'batteryOptimization',
@@ -61,7 +73,9 @@ export const PermissionsList = ({
               <View style={styles.copy}>
                 <View style={styles.titleLine}>
                   <Text style={styles.title}>{row.title}</Text>
-                  {row.optional ? <Text style={styles.optional}>OPTIONAL</Text> : null}
+                  {row.optional || row.badge ? (
+                    <Text style={styles.optional}>{row.badge ?? 'OPTIONAL'}</Text>
+                  ) : null}
                 </View>
                 <Text style={styles.detail}>{row.detail}</Text>
               </View>

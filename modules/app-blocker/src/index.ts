@@ -1,9 +1,23 @@
 import { requireNativeModule } from 'expo-modules-core';
-import type { BlockedAppEntry, InstalledApp, PhoneLockDurationMs, PhoneLockState } from './index.d';
+import type {
+  BlockedAppEntry,
+  InstalledApp,
+  PhoneLockDurationMs,
+  PhoneLockSchedule,
+  PhoneLockScheduleInput,
+  PhoneLockState,
+} from './index.d';
 
 const AppBlockerModule = requireNativeModule('AppBlocker');
 
-export type { BlockedAppEntry, InstalledApp, PhoneLockDurationMs, PhoneLockState };
+export type {
+  BlockedAppEntry,
+  InstalledApp,
+  PhoneLockDurationMs,
+  PhoneLockSchedule,
+  PhoneLockScheduleInput,
+  PhoneLockState,
+};
 
 export const AppBlocker = {
   async getInstalledApps(): Promise<InstalledApp[]> {
@@ -34,8 +48,35 @@ export const AppBlocker = {
     return AppBlockerModule.getBlockStats();
   },
 
-  startPhoneLock(durationMs: PhoneLockDurationMs): PhoneLockState {
-    return AppBlockerModule.startPhoneLock(durationMs);
+  canScheduleExactAlarms(): boolean {
+    return AppBlockerModule.canScheduleExactAlarms();
+  },
+
+  openExactAlarmSettings(): boolean {
+    return AppBlockerModule.openExactAlarmSettings();
+  },
+
+  getPhoneLockSchedules(): PhoneLockSchedule[] {
+    return AppBlockerModule.getPhoneLockSchedules();
+  },
+
+  upsertPhoneLockSchedule(schedule: PhoneLockScheduleInput): PhoneLockSchedule {
+    return AppBlockerModule.upsertPhoneLockSchedule(schedule);
+  },
+
+  deletePhoneLockSchedule(id: string): boolean {
+    return AppBlockerModule.deletePhoneLockSchedule(id);
+  },
+
+  setPhoneLockScheduleEnabled(id: string, enabled: boolean): PhoneLockSchedule {
+    return AppBlockerModule.setPhoneLockScheduleEnabled(id, enabled);
+  },
+
+  startPhoneLock(
+    durationMs: PhoneLockDurationMs,
+    allowedPackageNames: string[] = []
+  ): PhoneLockState {
+    return AppBlockerModule.startPhoneLock(durationMs, allowedPackageNames);
   },
 
   getPhoneLockState(): PhoneLockState {

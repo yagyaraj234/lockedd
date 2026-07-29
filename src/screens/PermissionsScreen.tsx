@@ -28,7 +28,9 @@ export const PermissionsScreen = ({ navigation }: any) => {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.maxWidth}>
           <Text style={styles.title}>{permissions.coreReady ? 'Blocking is ready.' : 'Finish setup.'}</Text>
-          <Text style={styles.body}>Required access stays focused on app blocking. Battery access is optional.</Text>
+          <Text style={styles.body}>
+            Accessibility and overlay power blocking. Alarms access is required for schedules; battery access is optional.
+          </Text>
           <View style={styles.listWrap}>
             <PermissionsList statuses={permissions.statuses} loading={permissions.loading} request={permissions.request} />
           </View>

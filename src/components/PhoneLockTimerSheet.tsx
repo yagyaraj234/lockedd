@@ -6,12 +6,13 @@ import type { Palette } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
 import { formatPhoneLockDuration, phoneLockDurationFromParts } from '../domain';
 import { useTheme } from '../theme';
-import { CloseIcon } from './icons';
+import { AllowedAppsSheet } from './AllowedAppsSheet';
+import { ChevronRightIcon, CloseIcon } from './icons';
 import { PressableScale } from './PressableScale';
 
 type Props = {
   visible: boolean;
-  onConfirm: (durationMs: number) => void;
+  onConfirm: (durationMs: number, allowedPackageNames: string[]) => void;
   onDismiss: () => void;
 };
 
@@ -80,6 +81,8 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
   const minuteRef = useRef<ScrollView>(null);
   const [hours, setHours] = useState(5);
   const [minutes, setMinutes] = useState(0);
+  const [allowedPackageNames, setAllowedPackageNames] = useState<string[]>([]);
+  const [showAllowedApps, setShowAllowedApps] = useState(false);
   const minuteOptions = hours === 0 ? MINUTE_OPTIONS.slice(1) : hours === 24 ? [0] : MINUTE_OPTIONS;
   const selectedMinutes = minuteOptions.includes(minutes) ? minutes : minuteOptions[0];
   const durationMs = phoneLockDurationFromParts(hours, selectedMinutes);
@@ -93,6 +96,7 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
     if (!visible) return;
     setHours(5);
     setMinutes(0);
+    setAllowedPackageNames([]);
     scrollToSelection(hourRef, Array.from({ length: 25 }, (_, index) => index), 5);
     scrollToSelection(minuteRef, MINUTE_OPTIONS, 0);
   }, [visible]);
@@ -103,15 +107,16 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
   }, [hours, minuteOptions.length, selectedMinutes]);
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss} statusBarTranslucent>
-      <View style={styles.fill}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close duration picker"
-          style={styles.scrim}
-          onPress={onDismiss}
-        />
-        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss} statusBarTranslucent>
+        <View style={styles.fill}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close duration picker"
+            style={styles.scrim}
+            onPress={onDismiss}
+          />
+          <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, Spacing.lg) }]}>
           <View style={styles.handle} />
           <View style={styles.header}>
             <View style={styles.headerCopy}>
@@ -146,21 +151,48 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
               scrollRef={minuteRef}
             />
           </View>
-          <Text style={styles.note}>Three 2-minute passes remain available during your lock.</Text>
+          <Text style={styles.note}>Two 1-minute passes, then a 5-minute cooldown. Cycle repeats.</Text>
+
+          <PressableScale
+            containerStyle={styles.fullWidth}
+            accessibilityRole="button"
+            accessibilityLabel={`Allowed apps, ${allowedPackageNames.length} selected`}
+            onPress={() => setShowAllowedApps(true)}
+            style={styles.allowedApps}
+            pressedStyle={styles.pressed}
+          >
+            <View style={styles.allowedCopy}>
+              <Text style={styles.allowedTitle}>Allowed apps</Text>
+              <Text style={styles.allowedDetail}>
+                {allowedPackageNames.length}/5 selected · Phone always available
+              </Text>
+            </View>
+            <ChevronRightIcon size={20} color={colors.labelTertiary} />
+          </PressableScale>
 
           <PressableScale
             containerStyle={styles.fullWidth}
             accessibilityRole="button"
             accessibilityLabel={`Lock phone for ${formatPhoneLockDuration(durationMs)}`}
-            onPress={() => onConfirm(durationMs)}
+            onPress={() => onConfirm(durationMs, allowedPackageNames)}
             style={styles.confirm}
             pressedStyle={styles.confirmPressed}
           >
             <Text style={styles.confirmText}>Continue</Text>
           </PressableScale>
+          </View>
         </View>
-      </View>
-    </Modal>
+      </Modal>
+      <AllowedAppsSheet
+        visible={showAllowedApps}
+        selected={allowedPackageNames}
+        onConfirm={(packages) => {
+          setAllowedPackageNames(packages);
+          setShowAllowedApps(false);
+        }}
+        onDismiss={() => setShowAllowedApps(false)}
+      />
+    </>
   );
 }
 
@@ -185,6 +217,19 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   wheelValue: { ...Type.body, color: colors.labelTertiary, fontVariant: ['tabular-nums'] },
   wheelValueSelected: { ...Type.title, color: colors.label },
   note: { ...Type.footnote, color: colors.labelSecondary, textAlign: 'center', marginTop: Spacing.lg },
+  allowedApps: {
+    minHeight: 68,
+    marginTop: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    borderRadius: Radius.md,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+  },
+  allowedCopy: { flex: 1 },
+  allowedTitle: { ...Type.bodyStrong, color: colors.label },
+  allowedDetail: { ...Type.footnote, color: colors.labelSecondary, marginTop: 2 },
   fullWidth: { width: '100%' },
   confirm: { minHeight: 54, borderRadius: Radius.pill, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.xl },
   confirmPressed: { backgroundColor: colors.accent },
