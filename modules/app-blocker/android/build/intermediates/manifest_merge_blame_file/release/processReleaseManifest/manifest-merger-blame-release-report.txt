@@ -4,4 +4,42 @@
 4
 5    <uses-sdk android:minSdkVersion="24" />
 6
-7</manifest>
+7    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+7-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:2:3-79
+7-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:2:20-76
+8    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+8-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:3:3-77
+8-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:3:20-74
+9
+10    <application>
+10-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:5:3-18:17
+11        <receiver
+11-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:6:5-17:16
+12            android:name="expo.modules.appblocker.PhoneLockAlarmReceiver"
+12-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:7:7-68
+13            android:enabled="true"
+13-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:8:7-29
+14            android:exported="false" >
+14-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:9:7-31
+15            <intent-filter>
+15-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:10:7-16:23
+16                <action android:name="android.intent.action.BOOT_COMPLETED" />
+16-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:11:9-71
+16-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:11:17-68
+17                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+17-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:12:9-76
+17-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:12:17-73
+18                <action android:name="android.intent.action.TIME_SET" />
+18-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:13:9-65
+18-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:13:17-62
+19                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+19-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:14:9-73
+19-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:14:17-70
+20                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+20-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:15:9-99
+20-->/Users/yagyarajl_500394/Developer/yagyaraj/locked/modules/app-blocker/android/src/main/AndroidManifest.xml:15:17-96
+21            </intent-filter>
+22        </receiver>
+23    </application>
+24
+25</manifest>
