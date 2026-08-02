@@ -38,6 +38,18 @@ export const PHONE_LOCK_COOLDOWN_MS = 5 * 60_000;
 const MINUTES_PER_DAY = 24 * 60;
 const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
 
+export const getNewPhoneLockScheduleDefaults = (now: Date = new Date()) => {
+  const start = new Date(now);
+  start.setSeconds(0, 0);
+  start.setMinutes(Math.ceil((start.getMinutes() + 15) / 15) * 15);
+  const startMinute = start.getHours() * 60 + start.getMinutes();
+  return {
+    days: [start.getDay() as Weekday],
+    startMinute,
+    endMinute: (startMinute + 60) % MINUTES_PER_DAY,
+  };
+};
+
 const scheduleIntervals = (schedule: PhoneLockSchedule): Array<[number, number]> =>
   schedule.days.flatMap((day) => {
     const start = day * MINUTES_PER_DAY + schedule.startMinute;

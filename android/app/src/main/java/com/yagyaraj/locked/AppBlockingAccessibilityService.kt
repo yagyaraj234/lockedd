@@ -600,7 +600,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private fun handlePhoneLock(foregroundPackage: String?, prefs: SharedPreferences): Boolean {
     val now = System.currentTimeMillis()
     val endsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_END, 0L)
-    if (endsAt == 0L) return false
+    if (endsAt == 0L) {
+      if (overlayMode == OverlayMode.PHONE_LOCK) clearPhoneLock(prefs)
+      return false
+    }
     if (isPhoneLockExpired(now, endsAt)) {
       clearPhoneLock(prefs)
       return false

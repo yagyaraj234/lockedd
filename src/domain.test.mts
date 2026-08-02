@@ -7,6 +7,7 @@ import {
   formatPhoneLockCountdown,
   getActivePhoneLockSchedule,
   getManualPhoneLockConflict,
+  getNewPhoneLockScheduleDefaults,
   getPhoneLockScheduleValidationError,
   isPhoneLockDuration,
   migrateThemePreference,
@@ -116,6 +117,19 @@ test('requires at least one repeat day', () => {
     getPhoneLockScheduleValidationError(schedule, []),
     'Choose at least one day'
   );
+});
+
+test('defaults new schedules to the next safe quarter-hour on the selected day', () => {
+  assert.deepEqual(getNewPhoneLockScheduleDefaults(new Date(2026, 7, 1, 10, 51)), {
+    days: [6],
+    startMinute: 11 * 60 + 15,
+    endMinute: 12 * 60 + 15,
+  });
+  assert.deepEqual(getNewPhoneLockScheduleDefaults(new Date(2026, 7, 1, 23, 59)), {
+    days: [0],
+    startMinute: 15,
+    endMinute: 75,
+  });
 });
 
 test('rejects equal schedule times and more than five allowed apps', () => {

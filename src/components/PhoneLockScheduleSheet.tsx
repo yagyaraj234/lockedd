@@ -18,6 +18,7 @@ import type {
 import type { Palette } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
 import {
+  getNewPhoneLockScheduleDefaults,
   getPhoneLockScheduleValidationError,
   type PhoneLockSchedule as DomainSchedule,
   type Weekday,
@@ -26,6 +27,7 @@ import { useTheme } from '../theme';
 import { AllowedAppsSheet } from './AllowedAppsSheet';
 import { CloseIcon, ChevronRightIcon } from './icons';
 import { PressableScale } from './PressableScale';
+import { TimeRangeSlider } from './TimeRangeSlider';
 
 type Props = {
   visible: boolean;
@@ -45,17 +47,6 @@ const DAYS: Array<{ value: Weekday; label: string; full: string }> = [
   { value: 6, label: 'S', full: 'Saturday' },
 ];
 
-const formatTime = (minute: number) =>
-  `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`;
-
-const parseTime = (value: string): number | null => {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const hours = Number(match[1]);
-  const minutes = Number(match[2]);
-  return hours < 24 && minutes < 60 ? hours * 60 + minutes : null;
-};
-
 export function PhoneLockScheduleSheet({
   visible,
   schedule,
@@ -69,18 +60,19 @@ export function PhoneLockScheduleSheet({
   const [name, setName] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [days, setDays] = useState<Weekday[]>([1, 2, 3, 4, 5]);
-  const [start, setStart] = useState('08:00');
-  const [end, setEnd] = useState('10:00');
+  const [startMinute, setStartMinute] = useState(8 * 60);
+  const [endMinute, setEndMinute] = useState(10 * 60);
   const [allowedPackageNames, setAllowedPackageNames] = useState<string[]>([]);
   const [showAllowedApps, setShowAllowedApps] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
+    const defaults = getNewPhoneLockScheduleDefaults();
     setName(schedule?.name ?? '');
     setEnabled(schedule?.enabled ?? true);
-    setDays((schedule?.days ?? [1, 2, 3, 4, 5]) as Weekday[]);
-    setStart(formatTime(schedule?.startMinute ?? 8 * 60));
-    setEnd(formatTime(schedule?.endMinute ?? 10 * 60));
+    setDays((schedule?.days ?? defaults.days) as Weekday[]);
+    setStartMinute(schedule?.startMinute ?? defaults.startMinute);
+    setEndMinute(schedule?.endMinute ?? defaults.endMinute);
     setAllowedPackageNames(schedule?.allowedPackageNames ?? []);
   }, [visible, schedule]);
 
@@ -92,12 +84,6 @@ export function PhoneLockScheduleSheet({
     );
 
   const save = () => {
-    const startMinute = parseTime(start);
-    const endMinute = parseTime(end);
-    if (startMinute == null || endMinute == null) {
-      Alert.alert('Invalid time', 'Use 24-hour HH:MM time, such as 08:00 or 21:30.');
-      return;
-    }
     const candidate: DomainSchedule = {
       id: schedule?.id ?? `schedule-${Date.now().toString(36)}`,
       name: name.trim(),
@@ -143,7 +129,7 @@ export function PhoneLockScheduleSheet({
             <View style={styles.header}>
               <View style={styles.headerCopy}>
                 <Text style={styles.title}>{schedule ? 'Edit schedule' : 'New schedule'}</Text>
-                <Text style={styles.subtitle}>Repeats weekly at any minute you choose.</Text>
+                <Text style={styles.subtitle}>Repeats weekly. Pick a future start time.</Text>
               </View>
               <PressableScale
                 accessibilityRole="button"
@@ -226,35 +212,18 @@ export function PhoneLockScheduleSheet({
                 })}
               </View>
 
-              <View style={styles.times}>
-                <View style={styles.timeField}>
-                  <Text style={styles.label}>Start</Text>
-                  <TextInput
-                    value={start}
-                    onChangeText={setStart}
-                    placeholder="08:00"
-                    placeholderTextColor={colors.labelTertiary}
-                    accessibilityLabel="Schedule start time in 24-hour format"
-                    keyboardType="numbers-and-punctuation"
-                    maxLength={5}
-                    style={styles.timeInput}
-                  />
-                </View>
-                <View style={styles.timeField}>
-                  <Text style={styles.label}>End</Text>
-                  <TextInput
-                    value={end}
-                    onChangeText={setEnd}
-                    placeholder="10:00"
-                    placeholderTextColor={colors.labelTertiary}
-                    accessibilityLabel="Schedule end time in 24-hour format"
-                    keyboardType="numbers-and-punctuation"
-                    maxLength={5}
-                    style={styles.timeInput}
-                  />
-                </View>
-              </View>
-              <Text style={styles.detail}>End before start creates an overnight schedule.</Text>
+              <Text style={styles.label}>Time range</Text>
+              <TimeRangeSlider
+                startMinute={startMinute}
+                endMinute={endMinute}
+                onChange={(nextStart, nextEnd) => {
+                  setStartMinute(nextStart);
+                  setEndMinute(nextEnd);
+                }}
+              />
+              <Text style={styles.detail}>
+                A window already in progress starts on its next selected day.
+              </Text>
 
               <PressableScale
                 containerStyle={styles.fullWidth}
@@ -384,18 +353,6 @@ const makeStyles = (colors: Palette) =>
     dayActive: { borderColor: colors.accent, backgroundColor: colors.accent },
     dayText: { ...Type.footnoteStrong, color: colors.labelSecondary },
     dayTextActive: { color: colors.onAccent },
-    times: { flexDirection: 'row', gap: Spacing.md },
-    timeField: { flex: 1, gap: Spacing.sm },
-    timeInput: {
-      minHeight: 52,
-      paddingHorizontal: Spacing.lg,
-      borderRadius: Radius.md,
-      backgroundColor: colors.surface,
-      fontSize: 22,
-      lineHeight: 28,
-      fontWeight: '600',
-      color: colors.label,
-    },
     allowedApps: {
       minHeight: 72,
       paddingHorizontal: Spacing.lg,
