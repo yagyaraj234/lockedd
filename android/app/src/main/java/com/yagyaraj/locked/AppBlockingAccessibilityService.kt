@@ -31,6 +31,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.LinearInterpolator
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import expo.modules.appblocker.PhoneLockScheduler
@@ -181,9 +182,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private var overlayAppText: TextView? = null
   private var overlayHintText: TextView? = null
   private var overlayPrimaryAction: TextView? = null
-  private var overlaySecondaryAction: TextView? = null
   private var overlayAllowedActions: LinearLayout? = null
-  private var renderedAllowedPackages: Set<String> = emptySet()
+  private var renderedAllowedPackages: Set<String>? = null
   private var overlayOrbView: BreathingOrbView? = null
   private var overlayBreathAnimator: ValueAnimator? = null
   private val overlayHandler = Handler(Looper.getMainLooper())
@@ -404,6 +404,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
         WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
       PixelFormat.OPAQUE
     )
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+    }
     val root = BlockOverlayRoot(this) { handleOverlayBack() }
     buildOverlayLayout(root)
     root.visibility = View.GONE
@@ -532,30 +535,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       topMargin = (26 * d).toInt()
     })
 
-    val secondaryAction = TextView(this).apply {
-      text = "Open Phone"
-      textSize = 15f
-      setTextColor(Color.parseColor("#B7D95B"))
-      gravity = Gravity.CENTER
-      typeface = Typeface.create("sans-serif", Typeface.BOLD)
-      minHeight = (48 * d).toInt()
-      minWidth = (160 * d).toInt()
-      setPadding((20 * d).toInt(), 0, (20 * d).toInt(), 0)
-      setOnClickListener { openPhone() }
-      contentDescription = "Open Phone without using a pass"
-      isFocusable = true
-      isFocusableInTouchMode = true
-      visibility = View.GONE
-    }
-    overlaySecondaryAction = secondaryAction
-    root.addView(secondaryAction, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (48 * d).toInt()).apply {
-      gravity = Gravity.CENTER_HORIZONTAL
-      topMargin = (8 * d).toInt()
-    })
-
     val allowedActions = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = Gravity.CENTER_HORIZONTAL
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER
       visibility = View.GONE
     }
     overlayAllowedActions = allowedActions
@@ -688,28 +670,41 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayHintText?.text =
       "Phone and allowed apps stay available. This lock cannot end early."
     overlayAllowedActions?.apply {
-      visibility = if (allowedPackages.isEmpty()) View.GONE else View.VISIBLE
+      visibility = View.VISIBLE
       if (allowedPackages != renderedAllowedPackages) {
         renderedAllowedPackages = allowedPackages.toSet()
         removeAllViews()
-        allowedPackages.sortedBy(::appLabel).forEach { packageName ->
+        val phonePackage = packageManager.resolveActivity(Intent(Intent.ACTION_DIAL), 0)
+          ?.activityInfo?.packageName
+        val actions = listOf(Triple(phonePackage, "Phone", true)) +
+          allowedPackages.sortedBy(::appLabel).map { Triple(it, appLabel(it), false) }
+        actions.forEach { (packageName, label, isPhone) ->
           addView(
-            TextView(this@AppBlockingAccessibilityService).apply {
-              text = "Open ${appLabel(packageName)}"
-              textSize = 15f
-              setTextColor(Color.parseColor("#B7D95B"))
-              gravity = Gravity.CENTER
-              typeface = Typeface.create("sans-serif", Typeface.BOLD)
-              minHeight = (44 * resources.displayMetrics.density).toInt()
-              contentDescription = "$text without using a pass"
-              setOnClickListener { openAllowedApp(packageName) }
+            ImageButton(this@AppBlockingAccessibilityService).apply {
+              setImageDrawable(try {
+                packageName?.let(packageManager::getApplicationIcon)
+                  ?: packageManager.defaultActivityIcon
+              } catch (_: Exception) {
+                packageManager.defaultActivityIcon
+              })
+              background = null
+              val padding = (3 * resources.displayMetrics.density).toInt()
+              setPadding(padding, padding, padding, padding)
+              scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+              contentDescription = "Open $label without using a pass"
+              setOnClickListener {
+                if (isPhone) openPhone() else packageName?.let(::openAllowedApp)
+              }
               isFocusable = true
               isFocusableInTouchMode = true
             },
             LinearLayout.LayoutParams(
-              ViewGroup.LayoutParams.WRAP_CONTENT,
-              (44 * resources.displayMetrics.density).toInt()
-            )
+              (40 * resources.displayMetrics.density).toInt(),
+              (40 * resources.displayMetrics.density).toInt()
+            ).apply {
+              val margin = (2 * resources.displayMetrics.density).toInt()
+              setMargins(margin, (8 * resources.displayMetrics.density).toInt(), margin, 0)
+            }
           )
         }
       }
@@ -732,7 +727,6 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       isEnabled = passes > 0 && !coolingDown
       alpha = if (isEnabled) 1f else 0.45f
     }
-    overlaySecondaryAction?.visibility = View.VISIBLE
     overlayRoot?.visibility = View.VISIBLE
     if (!wasVisible) {
       overlayPrimaryAction?.requestFocus()
@@ -871,7 +865,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       isEnabled = true
       alpha = 1f
     }
-    overlaySecondaryAction?.visibility = View.GONE
+    overlayAllowedActions?.visibility = View.GONE
     overlayRoot?.visibility = View.VISIBLE
     overlayRoot?.requestFocus()
     startOverlayTimer()
