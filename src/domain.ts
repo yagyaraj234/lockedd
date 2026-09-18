@@ -33,6 +33,10 @@ export type PhoneLockScheduleOccurrence = {
 export const PHONE_LOCK_ALLOWED_APP_LIMIT = 2;
 export const PHONE_LOCK_PASS_COUNT = 2;
 export const PHONE_LOCK_PASS_MS = 2 * 60_000;
+export const PERMANENT_BLOCK_UNLOCK_MS = 2 * 60_000;
+
+export const permanentBlockUnlockEndsAt = (now: number = Date.now()): number =>
+  now + PERMANENT_BLOCK_UNLOCK_MS;
 
 const MINUTES_PER_DAY = 24 * 60;
 const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;

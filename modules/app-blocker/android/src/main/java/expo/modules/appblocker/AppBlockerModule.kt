@@ -36,6 +36,7 @@ class AppBlockerModule : Module() {
     private const val PHONE_LOCK_MIN_DURATION_MS = 5 * 60 * 1000L
     private const val PHONE_LOCK_MAX_DURATION_MS = 24 * 60 * 60 * 1000L
     private const val PHONE_LOCK_DURATION_STEP_MS = 5 * 60 * 1000L
+    private const val PERMANENT_BLOCK_UNLOCK_MS = 2 * 60 * 1000L
   }
 
   private val context: Context
@@ -124,6 +125,29 @@ class AppBlockerModule : Module() {
       apps.forEach { editor.putLong("until_${it.packageName}", it.blockUntil?.toLong() ?: 0L) }
       editor.apply()
       true
+    }
+
+    // A permanent block can receive one, fixed two-minute pass. Native validation
+    // prevents JS callers from granting access to timed or no-longer-blocked apps,
+    // and an active pass is returned unchanged so it cannot be topped up.
+    Function("unlockPermanentBlockForTwoMinutes") { packageName: String ->
+      val prefs = blockerPrefs()
+      val blocked = prefs.getStringSet("blockedPackages", emptySet()) ?: emptySet()
+      require(packageName in blocked) { "App is not currently blocked" }
+      require(prefs.getLong("until_$packageName", 0L) == 0L) {
+        "Only permanent blocks can be temporarily unlocked"
+      }
+
+      val now = System.currentTimeMillis()
+      val allowKey = "allow_$packageName"
+      val activeUntil = prefs.getLong(allowKey, 0L)
+      if (activeUntil > now) {
+        activeUntil.toDouble()
+      } else {
+        val endsAt = now + PERMANENT_BLOCK_UNLOCK_MS
+        prefs.edit().putLong(allowKey, endsAt).apply()
+        endsAt.toDouble()
+      }
     }
 
     // Set Android Private DNS (DNS-over-TLS) to a custom hostname.

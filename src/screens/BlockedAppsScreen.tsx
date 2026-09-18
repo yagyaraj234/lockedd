@@ -7,6 +7,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PressableScale } from '../components/PressableScale';
 import { AppDialog } from '../components/AppDialog';
 import { LockIcon, PlusIcon } from '../components/icons';
+import { PERMANENT_BLOCK_UNLOCK_MS } from '../domain';
 import { usePermissions } from '../hooks/usePermissions';
 import {
   cleanupExpiredBlocks,
@@ -17,6 +18,9 @@ import {
   type BlockedApp,
 } from '../store/storage';
 import { useTheme } from '../theme';
+import { AppBlocker } from '../../modules/app-blocker/src';
+
+const UNLOCK_MINUTES = PERMANENT_BLOCK_UNLOCK_MS / 60_000;
 
 const lockLabel = (app: BlockedApp) => {
   const remaining = disableLockRemainingMs(app);
@@ -72,6 +76,27 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
     ]);
   };
 
+  const unlockForTwoMinutes = (app: BlockedApp) => {
+    AppDialog.alert(
+      `Unlock ${app.appName}?`,
+      `It will be available for ${UNLOCK_MINUTES} minutes. Its permanent block stays in place.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: `Unlock ${UNLOCK_MINUTES} min`,
+          onPress: () => {
+            try {
+              AppBlocker.unlockPermanentBlockForTwoMinutes(app.packageName);
+              AppDialog.alert('Unlocked temporarily', `${app.appName} is available for ${UNLOCK_MINUTES} minutes.`);
+            } catch {
+              AppDialog.alert('Could not unlock app', 'Rebuild Locked, then try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   return (
     <ScrollView
       style={styles.screen}
@@ -108,7 +133,17 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
                           <Text style={[styles.lockText, !locked && styles.readyText]}>{lockLabel(app)}</Text>
                         </View>
                       </View>
-                      {!locked ? (
+                      <View style={styles.actions}>
+                        <PressableScale
+                          accessibilityRole="button"
+                          accessibilityLabel={`Unlock ${app.appName} for ${UNLOCK_MINUTES} minutes`}
+                          onPress={() => unlockForTwoMinutes(app)}
+                          style={styles.unlock}
+                          pressedStyle={styles.pressed}
+                        >
+                          <Text style={styles.unlockText}>Unlock {UNLOCK_MINUTES} min</Text>
+                        </PressableScale>
+                        {!locked ? (
                         <PressableScale
                           accessibilityRole="button"
                           accessibilityLabel={`Remove ${app.appName}`}
@@ -118,7 +153,8 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
                         >
                           <Text style={styles.removeText}>Remove</Text>
                         </PressableScale>
-                      ) : null}
+                        ) : null}
+                      </View>
                     </View>
                     {index < apps.length - 1 ? <View style={styles.separator} /> : null}
                   </View>
@@ -157,6 +193,9 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   lockLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   lockText: { ...Type.footnote, color: colors.labelTertiary },
   readyText: { color: colors.accent },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  unlock: { minHeight: 48, borderRadius: Radius.pill, paddingHorizontal: Spacing.md, alignItems: 'center', backgroundColor: colors.accentMuted },
+  unlockText: { ...Type.footnoteStrong, color: colors.accent },
   remove: { minHeight: 48, borderRadius: Radius.pill, paddingHorizontal: Spacing.md, alignItems: 'center' },
   removeText: { ...Type.footnoteStrong, color: colors.danger },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginLeft: 76 },

@@ -42,6 +42,8 @@ export declare const AppBlocker: {
   getInstalledApps(): Promise<InstalledApp[]>;
   isAccessibilityEnabled(): Promise<boolean>;
   setBlockedApps(apps: BlockedAppEntry[]): boolean;
+  /** Grants one non-extendable two-minute pass for a currently permanent block. */
+  unlockPermanentBlockForTwoMinutes(packageName: string): number;
   setPrivateDns(hostname: string): boolean;
   hasWriteSecureSettings(): boolean;
   getPrivateDns(): { mode: string; specifier: string };

@@ -11,6 +11,8 @@ import {
   getPhoneLockScheduleValidationError,
   isPhoneLockDuration,
   migrateThemePreference,
+  PERMANENT_BLOCK_UNLOCK_MS,
+  permanentBlockUnlockEndsAt,
   phoneLockDurationFromParts,
   phoneLockRemainingMs,
   requestPhoneLockPass,
@@ -18,6 +20,12 @@ import {
   type PhoneLockAccessState,
   type PhoneLockSchedule,
 } from './domain.ts';
+
+test('permanent-block unlock always lasts exactly two minutes', () => {
+  const now = 1_000_000;
+  assert.equal(PERMANENT_BLOCK_UNLOCK_MS, 120_000);
+  assert.equal(permanentBlockUnlockEndsAt(now), now + 120_000);
+});
 
 test('migrates theme preference without changing stored dark or light choices', () => {
   assert.equal(migrateThemePreference('dark'), 'dark');
