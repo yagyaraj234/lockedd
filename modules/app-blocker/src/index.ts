@@ -2,6 +2,7 @@ import { requireNativeModule } from 'expo-modules-core';
 import type {
   BlockedAppEntry,
   InstalledApp,
+  OverlayDesign,
   PhoneLockDurationMs,
   PhoneLockSchedule,
   PhoneLockScheduleInput,
@@ -13,6 +14,7 @@ const AppBlockerModule = requireNativeModule('AppBlocker');
 export type {
   BlockedAppEntry,
   InstalledApp,
+  OverlayDesign,
   PhoneLockDurationMs,
   PhoneLockSchedule,
   PhoneLockScheduleInput,
@@ -81,5 +83,21 @@ export const AppBlocker = {
 
   getPhoneLockState(): PhoneLockState {
     return AppBlockerModule.getPhoneLockState();
+  },
+
+  getOverlayDesign(): OverlayDesign {
+    return AppBlockerModule.getOverlayDesign();
+  },
+
+  getCustomWallpaperUri(): string | null {
+    return AppBlockerModule.getCustomWallpaperUri();
+  },
+
+  openCustomWallpaperPicker(): boolean {
+    return AppBlockerModule.openCustomWallpaperPicker();
+  },
+
+  setOverlayDesign(design: OverlayDesign): OverlayDesign {
+    return AppBlockerModule.setOverlayDesign(design);
   },
 };

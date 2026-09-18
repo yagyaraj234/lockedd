@@ -11,10 +11,21 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.ColorFilter
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PixelFormat
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -38,6 +49,8 @@ import expo.modules.appblocker.PhoneLockScheduler
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.sin
 
 // Shared SharedPreferences contract between the JS-facing AppBlockerModule
 // (package expo.modules.appblocker) and this service. Same app, so the prefs
@@ -59,7 +72,6 @@ object BlockerPrefs {
 
   const val PHONE_LOCK_END = PhoneLockScheduler.PHONE_LOCK_END
   const val PHONE_LOCK_PASS_END = PhoneLockScheduler.PHONE_LOCK_PASS_END
-  const val PHONE_LOCK_COOLDOWN_END = PhoneLockScheduler.PHONE_LOCK_COOLDOWN_END
   const val PHONE_LOCK_PASSES_REMAINING = PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING
   const val PHONE_LOCK_ALLOWED_PACKAGES = PhoneLockScheduler.PHONE_LOCK_ALLOWED_PACKAGES
   const val PHONE_LOCK_CHANGED_ACTION = PhoneLockScheduler.PHONE_LOCK_CHANGED_ACTION
@@ -149,6 +161,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   // re-blocks.
   private var lastBlocked: String? = null
   private var lastBlockLaunchAt: Long = 0L
+  private var lastForegroundPackage: String? = null
 
   // How long after launching the block screen we suppress a relaunch for the same
   // package. Long enough to swallow the window-event burst from HOME + our own
@@ -184,6 +197,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private var overlayPrimaryAction: TextView? = null
   private var overlayAllowedActions: LinearLayout? = null
   private var renderedAllowedPackages: Set<String>? = null
+  private var overlayMotivationText: TextView? = null
+  private var overlayWallpaper: AnimatedOverlayWallpaperDrawable? = null
+  private var customWallpaperUri: String? = null
+  private var customWallpaperBitmap: Bitmap? = null
   private var overlayOrbView: BreathingOrbView? = null
   private var overlayBreathAnimator: ValueAnimator? = null
   private val overlayHandler = Handler(Looper.getMainLooper())
@@ -242,7 +259,13 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       Log.d("BlockLatency", "event pkg=$pkg t=${System.currentTimeMillis()}")
     }
 
-    if (handlePhoneLock(pkg, prefs)) return
+    val phoneLockPackage = if (isPhoneLockAllowed(pkg, prefs)) {
+      lastForegroundPackage = pkg
+      pkg
+    } else {
+      currentForegroundPackage() ?: pkg
+    }
+    if (handlePhoneLock(phoneLockPackage, prefs)) return
 
     // Our own windows (including BlockingActivity) — never block ourselves.
     if (pkg == packageName) {
@@ -419,7 +442,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     root.orientation = LinearLayout.VERTICAL
     root.gravity = Gravity.CENTER_HORIZONTAL
     root.setPadding((28 * d).toInt(), 0, (28 * d).toInt(), 0)
-    root.setBackgroundColor(Color.parseColor("#0B0C0A"))
+    overlayWallpaper = AnimatedOverlayWallpaperDrawable().also { root.background = it }
 
     root.addView(View(this), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.7f))
 
@@ -434,6 +457,20 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       gravity = Gravity.CENTER_HORIZONTAL
       bottomMargin = (18 * d).toInt()
     })
+
+    overlayMotivationText = TextView(this).apply {
+      text = "BEGIN AGAIN"
+      textSize = 12f
+      setTextColor(Color.parseColor("#DDE7C4"))
+      gravity = Gravity.CENTER
+      typeface = Typeface.create("sans-serif", Typeface.BOLD)
+      letterSpacing = 0.14f
+    }.also {
+      root.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        bottomMargin = (14 * d).toInt()
+      })
+    }
 
     val titleText = TextView(this).apply {
       text = "Blocked"
@@ -605,12 +642,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       return true
     }
     val activePackage = foregroundPackage ?: currentForegroundPackage()
-    val allowedPackages =
-      prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
-    if (
-      activePackage != null &&
-      (activePackage in phonePackages() || activePackage in allowedPackages)
-    ) {
+    if (activePackage != null && isPhoneLockAllowed(activePackage, prefs)) {
       hidePhoneLockOverlay()
       schedulePhoneLockTick()
       return true
@@ -637,6 +669,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       overlayRunning = false
       overlayMode = OverlayMode.NONE
       overlayBreathAnimator?.cancel()
+      overlayWallpaper?.hide()
       overlayRoot?.visibility = View.GONE
     }
   }
@@ -653,19 +686,16 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     }
     overlayMode = OverlayMode.PHONE_LOCK
     overlayRunning = true
+    applyOverlayDesign(prefs)
     overlayTitleText?.text = "Phone locked"
     overlayTimerText?.text = formatCountdown(endsAt - now)
     val passes = prefs.getInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, 0)
     val allowedPackages =
       prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
-    val cooldownEndsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_COOLDOWN_END, 0L)
-    val coolingDown = cooldownEndsAt > now
-    overlayAppText?.text = if (coolingDown) {
-      "Passes reset in ${formatCountdown(cooldownEndsAt - now)}"
-    } else if (passes == 1) {
-      "1 pass left · 1 minute"
+    overlayAppText?.text = if (passes == 1) {
+      "1 pass left · 2 minutes"
     } else {
-      "$passes passes left · 1 minute each"
+      "$passes passes left · 2 minutes each"
     }
     overlayHintText?.text =
       "Phone and allowed apps stay available. This lock cannot end early."
@@ -688,7 +718,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
                 packageManager.defaultActivityIcon
               })
               background = null
-              val padding = (3 * resources.displayMetrics.density).toInt()
+              val padding = (4 * resources.displayMetrics.density).toInt()
               setPadding(padding, padding, padding, padding)
               scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
               contentDescription = "Open $label without using a pass"
@@ -699,32 +729,28 @@ class AppBlockingAccessibilityService : AccessibilityService() {
               isFocusableInTouchMode = true
             },
             LinearLayout.LayoutParams(
-              (40 * resources.displayMetrics.density).toInt(),
-              (40 * resources.displayMetrics.density).toInt()
+              (64 * resources.displayMetrics.density).toInt(),
+              (64 * resources.displayMetrics.density).toInt()
             ).apply {
-              val margin = (2 * resources.displayMetrics.density).toInt()
-              setMargins(margin, (8 * resources.displayMetrics.density).toInt(), margin, 0)
+              val margin = (6 * resources.displayMetrics.density).toInt()
+              setMargins(margin, (12 * resources.displayMetrics.density).toInt(), margin, 0)
             }
           )
         }
       }
     }
     overlayPrimaryAction?.apply {
-      text = if (coolingDown) {
-        "Cooldown · ${formatCountdown(cooldownEndsAt - now)}"
-      } else if (passes > 0) {
-        "Use a 1-minute pass"
+      text = if (passes > 0) {
+        "Use a 2-minute pass"
       } else {
         "No passes available"
       }
-      contentDescription = if (coolingDown) {
-        "Phone pass cooldown, ${formatCountdown(cooldownEndsAt - now)} remaining"
-      } else if (passes > 0) {
-        "Use a 1-minute pass, $passes remaining"
+      contentDescription = if (passes > 0) {
+        "Use a 2-minute pass, $passes remaining"
       } else {
         "No phone passes available"
       }
-      isEnabled = passes > 0 && !coolingDown
+      isEnabled = passes > 0
       alpha = if (isEnabled) 1f else 0.45f
     }
     overlayRoot?.visibility = View.VISIBLE
@@ -747,6 +773,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayMode = OverlayMode.PHONE_LOCK
     overlayRunning = false
     overlayBreathAnimator?.cancel()
+    overlayWallpaper?.hide()
     overlayRoot?.visibility = View.GONE
   }
 
@@ -756,10 +783,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     PhoneLockScheduler.resolveAccessCycle(prefs, now)
     val endsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_END, 0L)
     val remaining = prefs.getInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, 0)
-    if (
-      prefs.getLong(BlockerPrefs.PHONE_LOCK_PASS_END, 0L) > now ||
-      prefs.getLong(BlockerPrefs.PHONE_LOCK_COOLDOWN_END, 0L) > now
-    ) {
+    if (prefs.getLong(BlockerPrefs.PHONE_LOCK_PASS_END, 0L) > now) {
       return
     }
     val next = nextPhonePass(now, endsAt, remaining) ?: return
@@ -832,13 +856,29 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     return packages
   }
 
+  private fun isPhoneLockAllowed(packageName: String, prefs: SharedPreferences): Boolean =
+    packageName in phonePackages() || packageName in (
+      prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
+    )
+
   private fun currentForegroundPackage(): String? {
-    val root = try { rootInActiveWindow } catch (_: Exception) { null } ?: return null
-    return try {
-      root.packageName?.toString()
-    } finally {
-      root.recycle()
+    val current = try {
+      windows.firstNotNullOfOrNull { window ->
+        if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@firstNotNullOfOrNull null
+        val root = window.root ?: return@firstNotNullOfOrNull null
+        try {
+          root.packageName?.toString()
+        } finally {
+          root.recycle()
+        }
+      }
+    } catch (_: Exception) {
+      null
     }
+    if (current != null) {
+      lastForegroundPackage = current
+    }
+    return current ?: lastForegroundPackage
   }
 
   private fun formatCountdown(remainingMs: Long): String {
@@ -854,6 +894,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayBreathAnimator?.cancel()
     overlayMode = OverlayMode.APP_BLOCK
     overlayRunning = true
+    applyOverlayDesign(getSharedPreferences(BlockerPrefs.FILE, Context.MODE_PRIVATE))
     overlaySecondsRemaining = 300
     overlayTitleText?.text = "Blocked"
     overlayTimerText?.text = "05:00"
@@ -883,6 +924,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayRunning = false
     overlayMode = OverlayMode.NONE
     overlayBreathAnimator?.cancel()
+    overlayWallpaper?.hide()
     overlayHandler.removeCallbacksAndMessages(null)
     overlayRoot?.visibility = View.GONE
     performGlobalAction(GLOBAL_ACTION_HOME)
@@ -951,6 +993,53 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
   private fun animationsEnabled(): Boolean =
     Build.VERSION.SDK_INT < Build.VERSION_CODES.O || ValueAnimator.areAnimatorsEnabled()
+
+  private fun applyOverlayDesign(prefs: SharedPreferences) {
+    val design = prefs.getString(
+      PhoneLockScheduler.OVERLAY_DESIGN,
+      PhoneLockScheduler.DEFAULT_OVERLAY_DESIGN
+    )?.takeIf { it in PhoneLockScheduler.OVERLAY_DESIGNS }
+      ?: PhoneLockScheduler.DEFAULT_OVERLAY_DESIGN
+    val nextCustomUri = prefs.getString(PhoneLockScheduler.CUSTOM_WALLPAPER_URI, null)
+      .takeIf { design == "custom" }
+    if (nextCustomUri != customWallpaperUri) {
+      customWallpaperBitmap?.recycle()
+      customWallpaperUri = nextCustomUri
+      customWallpaperBitmap = nextCustomUri?.let(::decodeCustomWallpaper)
+    }
+    overlayWallpaper?.show(design, animationsEnabled(), customWallpaperBitmap)
+    overlayMotivationText?.text = when (design) {
+      "orbit" -> "STAY ON COURSE"
+      "waves" -> "KEEP MOVING"
+      "bloom" -> "GROW THROUGH IT"
+      "stars" -> "AIM HIGHER"
+      "grid" -> "ONE STEP AT A TIME"
+      "custom" -> "MAKE IT COUNT"
+      else -> "BEGIN AGAIN"
+    }
+  }
+
+  private fun decodeCustomWallpaper(uriString: String): Bitmap? {
+    return try {
+      val uri = Uri.parse(uriString)
+      val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, bounds)
+      }
+      if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+        null
+      } else {
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 3072) sample *= 2
+        contentResolver.openInputStream(uri)?.use {
+          BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        }
+      }
+    } catch (error: Exception) {
+      Log.w("LockedWallpaper", "Could not decode custom wallpaper", error)
+      null
+    }
+  }
 
   private fun appLabel(pkg: String): String = try {
     val info = packageManager.getApplicationInfo(pkg, 0)
@@ -1156,6 +1245,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   override fun onDestroy() {
     overlayRunning = false
     overlayBreathAnimator?.cancel()
+    overlayWallpaper?.hide()
+    customWallpaperBitmap?.recycle()
+    customWallpaperBitmap = null
     overlayHandler.removeCallbacksAndMessages(null)
     if (phoneLockReceiverRegistered) {
       try { unregisterReceiver(phoneLockReceiver) } catch (_: Exception) {}
@@ -1181,4 +1273,262 @@ class BlockOverlayRoot(context: Context, private val onBack: () -> Unit) : Linea
     }
     return super.dispatchKeyEvent(event)
   }
+}
+
+class AnimatedOverlayWallpaperDrawable : Drawable() {
+  private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+  private val path = Path()
+  private var design = PhoneLockScheduler.DEFAULT_OVERLAY_DESIGN
+  private var progress = 0.35f
+  private var customBitmap: Bitmap? = null
+  private var animator: ValueAnimator? = null
+
+  fun show(nextDesign: String, animate: Boolean, nextCustomBitmap: Bitmap? = null) {
+    design = nextDesign
+    customBitmap = nextCustomBitmap
+    if (!animate) {
+      animator?.cancel()
+      progress = 0.35f
+      invalidateSelf()
+      return
+    }
+    if (animator?.isRunning == true) {
+      invalidateSelf()
+      return
+    }
+    animator = ValueAnimator.ofFloat(0f, 1f).apply {
+      duration = 12_000L
+      repeatCount = ValueAnimator.INFINITE
+      interpolator = LinearInterpolator()
+      addUpdateListener {
+        progress = it.animatedValue as Float
+        invalidateSelf()
+      }
+      start()
+    }
+  }
+
+  fun hide() {
+    animator?.cancel()
+    animator = null
+  }
+
+  override fun draw(canvas: Canvas) {
+    val w = bounds.width().toFloat()
+    val h = bounds.height().toFloat()
+    if (w <= 0f || h <= 0f) return
+    if (design == "custom") {
+      drawCustom(canvas, w, h)
+      return
+    }
+    drawBase(canvas, w, h)
+    when (design) {
+      "orbit" -> drawOrbit(canvas, w, h)
+      "waves" -> drawWaves(canvas, w, h)
+      "bloom" -> drawBloom(canvas, w, h)
+      "stars" -> drawStars(canvas, w, h)
+      "grid" -> drawGrid(canvas, w, h)
+      else -> drawSunrise(canvas, w, h)
+    }
+  }
+
+  private fun drawCustom(canvas: Canvas, w: Float, h: Float) {
+    paint.shader = null
+    paint.style = Paint.Style.FILL
+    paint.alpha = 255
+    paint.color = Color.BLACK
+    canvas.drawRect(0f, 0f, w, h, paint)
+
+    customBitmap?.takeUnless { it.isRecycled }?.let { bitmap ->
+      val zoom = 1f + ((sin(progress * PI * 2) + 1) * 0.0125f).toFloat()
+      val scale = maxOf(w / bitmap.width, h / bitmap.height) * zoom
+      val left = (w - bitmap.width * scale) / 2f
+      val top = (h - bitmap.height * scale) / 2f
+      canvas.save()
+      canvas.translate(left, top)
+      canvas.scale(scale, scale)
+      paint.isFilterBitmap = true
+      canvas.drawBitmap(bitmap, 0f, 0f, paint)
+      canvas.restore()
+    }
+
+    paint.shader = LinearGradient(
+      0f,
+      0f,
+      0f,
+      h,
+      intArrayOf(Color.argb(45, 0, 0, 0), Color.argb(150, 0, 0, 0)),
+      null,
+      Shader.TileMode.CLAMP
+    )
+    canvas.drawRect(0f, 0f, w, h, paint)
+    paint.shader = null
+  }
+
+  private fun drawBase(canvas: Canvas, w: Float, h: Float) {
+    val colors = when (design) {
+      "orbit" -> intArrayOf(Color.parseColor("#061719"), Color.parseColor("#16322D"))
+      "waves" -> intArrayOf(Color.parseColor("#071329"), Color.parseColor("#173462"))
+      "bloom" -> intArrayOf(Color.parseColor("#180C20"), Color.parseColor("#41182F"))
+      "stars" -> intArrayOf(Color.parseColor("#050711"), Color.parseColor("#111936"))
+      "grid" -> intArrayOf(Color.parseColor("#090A08"), Color.parseColor("#242719"))
+      else -> intArrayOf(Color.parseColor("#0B1025"), Color.parseColor("#3A1E42"))
+    }
+    paint.style = Paint.Style.FILL
+    paint.alpha = 255
+    paint.shader = LinearGradient(0f, 0f, 0f, h, colors, null, Shader.TileMode.CLAMP)
+    canvas.drawRect(0f, 0f, w, h, paint)
+    paint.shader = null
+  }
+
+  private fun drawSunrise(canvas: Canvas, w: Float, h: Float) {
+    val pulse = ((sin(progress * PI * 2) + 1) / 2).toFloat()
+    val cx = w / 2
+    val cy = h * (0.34f + 0.025f * (1 - pulse))
+    val radius = minOf(w, h) * (0.13f + 0.01f * pulse)
+    paint.style = Paint.Style.FILL
+    paint.color = Color.argb(35, 255, 194, 112)
+    canvas.drawCircle(cx, cy, radius * 1.75f, paint)
+    paint.color = Color.argb(230, 255, 205, 121)
+    canvas.drawCircle(cx, cy, radius, paint)
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = minOf(w, h) * 0.006f
+    repeat(4) { index ->
+      paint.color = Color.argb(75 - index * 12, 255, 211, 142)
+      val spread = radius * (1.35f + index * 0.33f + pulse * 0.08f)
+      canvas.drawArc(RectF(cx - spread, cy - spread, cx + spread, cy + spread), 205f, 130f, false, paint)
+    }
+    paint.strokeWidth = minOf(w, h) * 0.003f
+    repeat(7) { index ->
+      val y = h * 0.52f + index * h * 0.045f
+      paint.color = Color.argb(55 - index * 6, 255, 221, 164)
+      canvas.drawLine(w * 0.12f, y, w * 0.88f, y, paint)
+    }
+  }
+
+  private fun drawOrbit(canvas: Canvas, w: Float, h: Float) {
+    val cx = w / 2
+    val cy = h * 0.43f
+    val size = minOf(w, h)
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = size * 0.006f
+    canvas.save()
+    canvas.rotate(progress * 360f, cx, cy)
+    repeat(3) { index ->
+      val rx = size * (0.16f + index * 0.085f)
+      val ry = rx * (0.48f + index * 0.05f)
+      canvas.save()
+      canvas.rotate(index * 58f, cx, cy)
+      paint.color = Color.argb(105 - index * 20, 119, 234, 184)
+      canvas.drawOval(RectF(cx - rx, cy - ry, cx + rx, cy + ry), paint)
+      paint.style = Paint.Style.FILL
+      paint.color = Color.argb(235, 183, 255, 220)
+      canvas.drawCircle(cx + rx, cy, size * (0.012f + index * 0.003f), paint)
+      paint.style = Paint.Style.STROKE
+      canvas.restore()
+    }
+    canvas.restore()
+    paint.style = Paint.Style.FILL
+    paint.color = Color.argb(50, 110, 246, 190)
+    canvas.drawCircle(cx, cy, size * 0.105f, paint)
+    paint.color = Color.argb(225, 176, 255, 219)
+    canvas.drawCircle(cx, cy, size * 0.045f, paint)
+  }
+
+  private fun drawWaves(canvas: Canvas, w: Float, h: Float) {
+    paint.style = Paint.Style.STROKE
+    repeat(5) { layer ->
+      path.reset()
+      val center = h * (0.25f + layer * 0.13f)
+      val amplitude = h * (0.025f + layer * 0.006f)
+      var x = -24f
+      while (x <= w + 24f) {
+        val angle = (x / w * PI * 2.2) + progress * PI * 2 + layer * 0.8
+        val y = center + sin(angle).toFloat() * amplitude
+        if (x < 0f) path.moveTo(x, y) else path.lineTo(x, y)
+        x += 24f
+      }
+      paint.strokeWidth = minOf(w, h) * (0.018f - layer * 0.002f)
+      paint.color = Color.argb(125 - layer * 14, 101, 175, 255)
+      canvas.drawPath(path, paint)
+    }
+  }
+
+  private fun drawBloom(canvas: Canvas, w: Float, h: Float) {
+    val cx = w / 2
+    val cy = h * 0.42f
+    val size = minOf(w, h)
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = size * 0.006f
+    repeat(5) { index ->
+      val phase = (progress + index * 0.2f) % 1f
+      val radius = size * (0.07f + phase * 0.32f)
+      paint.color = Color.argb(((1 - phase) * 125).toInt(), 255, 139, 188)
+      canvas.drawCircle(cx, cy, radius, paint)
+    }
+    canvas.save()
+    canvas.rotate(progress * 180f, cx, cy)
+    paint.style = Paint.Style.FILL
+    repeat(8) { index ->
+      canvas.save()
+      canvas.rotate(index * 45f, cx, cy)
+      paint.color = Color.argb(68, 255, 167, 205)
+      canvas.drawOval(
+        RectF(cx - size * 0.045f, cy - size * 0.25f, cx + size * 0.045f, cy - size * 0.07f),
+        paint
+      )
+      canvas.restore()
+    }
+    canvas.restore()
+    paint.color = Color.argb(230, 255, 204, 224)
+    canvas.drawCircle(cx, cy, size * 0.045f, paint)
+  }
+
+  private fun drawStars(canvas: Canvas, w: Float, h: Float) {
+    paint.style = Paint.Style.FILL
+    repeat(38) { index ->
+      val x = ((index * 73) % 101) / 100f * w
+      val baseY = ((index * 37) % 103) / 102f * h
+      val y = (baseY + progress * h * (0.08f + (index % 4) * 0.015f)) % h
+      val twinkle = ((sin(progress * PI * 4 + index) + 1) * 0.5).toFloat()
+      paint.color = Color.argb((70 + twinkle * 155).toInt(), 255, 225, 143)
+      val radius = minOf(w, h) * (0.0035f + (index % 3) * 0.002f)
+      canvas.drawCircle(x, y, radius, paint)
+    }
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = minOf(w, h) * 0.003f
+    paint.color = Color.argb(72, 144, 171, 255)
+    val points = arrayOf(0.24f to 0.36f, 0.41f to 0.29f, 0.57f to 0.41f, 0.72f to 0.32f)
+    for (index in 0 until points.lastIndex) {
+      val a = points[index]
+      val b = points[index + 1]
+      canvas.drawLine(a.first * w, a.second * h, b.first * w, b.second * h, paint)
+    }
+  }
+
+  private fun drawGrid(canvas: Canvas, w: Float, h: Float) {
+    val horizon = h * 0.36f
+    paint.style = Paint.Style.STROKE
+    paint.strokeWidth = minOf(w, h) * 0.0035f
+    paint.color = Color.argb(90, 198, 232, 106)
+    for (index in -7..7) {
+      val bottomX = w / 2 + index * w / 7f
+      canvas.drawLine(w / 2, horizon, bottomX, h, paint)
+    }
+    repeat(15) { index ->
+      val step = ((index / 15f + progress * 0.16f) % 1f)
+      val curved = step * step
+      val y = horizon + curved * (h - horizon)
+      paint.color = Color.argb((45 + curved * 85).toInt(), 198, 232, 106)
+      canvas.drawLine(0f, y, w, y, paint)
+    }
+    paint.style = Paint.Style.FILL
+    paint.color = Color.argb(90, 212, 245, 129)
+    canvas.drawCircle(w / 2, horizon, minOf(w, h) * 0.025f, paint)
+  }
+
+  override fun setAlpha(alpha: Int) = Unit
+  override fun setColorFilter(colorFilter: ColorFilter?) = Unit
+  @Suppress("DEPRECATION")
+  override fun getOpacity(): Int = PixelFormat.OPAQUE
 }

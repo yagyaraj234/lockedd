@@ -4,7 +4,11 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Palette } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
-import { formatPhoneLockDuration, phoneLockDurationFromParts } from '../domain';
+import {
+  formatPhoneLockDuration,
+  PHONE_LOCK_ALLOWED_APP_LIMIT,
+  phoneLockDurationFromParts,
+} from '../domain';
 import { useTheme } from '../theme';
 import { AllowedAppsSheet } from './AllowedAppsSheet';
 import { ChevronRightIcon, CloseIcon } from './icons';
@@ -151,7 +155,7 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
               scrollRef={minuteRef}
             />
           </View>
-          <Text style={styles.note}>Two 1-minute passes, then a 5-minute cooldown. Cycle repeats.</Text>
+          <Text style={styles.note}>Two passes total, 2 minutes each. They do not reset during this lock.</Text>
 
           <PressableScale
             containerStyle={styles.fullWidth}
@@ -164,7 +168,7 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
             <View style={styles.allowedCopy}>
               <Text style={styles.allowedTitle}>Allowed apps</Text>
               <Text style={styles.allowedDetail}>
-                {allowedPackageNames.length}/5 selected · Phone always available
+                {allowedPackageNames.length}/{PHONE_LOCK_ALLOWED_APP_LIMIT} selected · Phone always available
               </Text>
             </View>
             <ChevronRightIcon size={20} color={colors.labelTertiary} />

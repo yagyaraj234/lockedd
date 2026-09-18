@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Modal,
   Pressable,
@@ -15,9 +14,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppBlocker, type InstalledApp } from '../../modules/app-blocker/src';
 import type { Palette } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
+import { PHONE_LOCK_ALLOWED_APP_LIMIT } from '../domain';
 import { useTheme } from '../theme';
 import { CloseIcon } from './icons';
 import { PressableScale } from './PressableScale';
+import { AppDialog } from './AppDialog';
 
 type Props = {
   visible: boolean;
@@ -37,7 +38,7 @@ export function AllowedAppsSheet({ visible, selected, onConfirm, onDismiss }: Pr
 
   useEffect(() => {
     if (!visible) return;
-    setSelection(selected);
+    setSelection(selected.slice(0, PHONE_LOCK_ALLOWED_APP_LIMIT));
     setQuery('');
     setLoading(true);
     AppBlocker.getInstalledApps()
@@ -51,7 +52,7 @@ export function AllowedAppsSheet({ visible, selected, onConfirm, onDismiss }: Pr
             .sort((a, b) => a.appName.localeCompare(b.appName))
         )
       )
-      .catch(() => Alert.alert('Could not load apps', 'Rebuild the native app and try again.'))
+      .catch(() => AppDialog.alert('Could not load apps', 'Rebuild the native app and try again.'))
       .finally(() => setLoading(false));
   }, [visible]);
 
@@ -66,8 +67,8 @@ export function AllowedAppsSheet({ visible, selected, onConfirm, onDismiss }: Pr
       setSelection(selection.filter((value) => value !== packageName));
       return;
     }
-    if (selection.length === 5) {
-      Alert.alert('Five-app limit', 'Remove one allowed app before adding another.');
+    if (selection.length >= PHONE_LOCK_ALLOWED_APP_LIMIT) {
+      AppDialog.alert('Two-app limit', 'Remove one allowed app before adding another.');
       return;
     }
     setSelection([...selection, packageName]);
@@ -94,7 +95,7 @@ export function AllowedAppsSheet({ visible, selected, onConfirm, onDismiss }: Pr
             <View style={styles.headerCopy}>
               <Text style={styles.title}>Allowed apps</Text>
               <Text style={styles.subtitle}>
-                Choose up to five. Phone is always available and uses no slot.
+                Choose up to two. Phone is always available and uses no slot.
               </Text>
             </View>
             <PressableScale
@@ -173,7 +174,7 @@ export function AllowedAppsSheet({ visible, selected, onConfirm, onDismiss }: Pr
             pressedStyle={styles.confirmPressed}
           >
             <Text style={styles.confirmText}>
-              Save {selection.length}/5
+              Save {selection.length}/{PHONE_LOCK_ALLOWED_APP_LIMIT}
             </Text>
           </PressableScale>
         </View>

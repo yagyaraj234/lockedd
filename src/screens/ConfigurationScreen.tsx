@@ -1,11 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, AppState, Platform, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { AppState, Platform, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import type { Palette, ThemePreference } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
 import { PressableScale } from '../components/PressableScale';
+import { AppDialog } from '../components/AppDialog';
 import { CheckIcon, ChevronRightIcon } from '../components/icons';
+import {
+  OverlayDesignPreview,
+  OverlayDesignSheet,
+  overlayDesignName,
+} from '../components/OverlayDesignSheet';
 import { usePermissions } from '../hooks/usePermissions';
 import { PreventionMode } from '../../modules/prevention-mode/src';
 import {
@@ -18,6 +24,7 @@ import {
   updateSettings,
 } from '../store/storage';
 import { useTheme } from '../theme';
+import { AppBlocker, type OverlayDesign } from '../../modules/app-blocker/src';
 
 const appearanceOptions: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: 'System' },
@@ -38,6 +45,16 @@ export const ConfigurationScreen = ({ navigation }: any) => {
   const permissions = usePermissions();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const [settings, setSettings] = useState(getSettings());
+  const [overlayDesign, setOverlayDesign] = useState<OverlayDesign>('sunrise');
+  const [customWallpaperUri, setCustomWallpaperUri] = useState<string | null>(null);
+  const [showOverlayDesigns, setShowOverlayDesigns] = useState(false);
+
+  const reloadOverlayDesign = () => {
+    try {
+      setOverlayDesign(AppBlocker.getOverlayDesign());
+      setCustomWallpaperUri(AppBlocker.getCustomWallpaperUri());
+    } catch {}
+  };
 
   const reconcilePreventionMode = async () => {
     try {
@@ -64,9 +81,13 @@ export const ConfigurationScreen = ({ navigation }: any) => {
   };
 
   useEffect(() => {
+    reloadOverlayDesign();
     reconcilePreventionMode();
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') reconcilePreventionMode();
+      if (state === 'active') {
+        reloadOverlayDesign();
+        reconcilePreventionMode();
+      }
     });
     return () => subscription.remove();
   }, []);
@@ -79,14 +100,14 @@ export const ConfigurationScreen = ({ navigation }: any) => {
       try {
         await PreventionMode.enable();
       } catch {
-        Alert.alert('Unavailable', 'Prevention Mode needs a native build to work.');
+        AppDialog.alert('Unavailable', 'Prevention Mode needs a native build to work.');
       }
       return;
     }
 
     if (isPreventionLocked()) {
       const days = Math.ceil(preventionLockRemainingMs() / 86_400_000);
-      Alert.alert('Prevention Mode is locked', `You can request removal in ${days} day${days === 1 ? '' : 's'}.`);
+      AppDialog.alert('Prevention Mode is locked', `You can request removal in ${days} day${days === 1 ? '' : 's'}.`);
       return;
     }
 
@@ -95,13 +116,13 @@ export const ConfigurationScreen = ({ navigation }: any) => {
       const next = { ...current, preventionModeOffRequestedAt: Date.now() };
       updateSettings(next);
       setSettings(next);
-      Alert.alert('Disable requested', 'Return in 12 hours and tap Prevention Mode again to confirm.');
+      AppDialog.alert('Disable requested', 'Return in 12 hours and tap Prevention Mode again to confirm.');
       return;
     }
 
     if (!isPreventionDisableReady()) {
       const hours = Math.ceil(preventionDisableRemainingMs() / 3_600_000);
-      Alert.alert('Cooldown in progress', `You can turn it off in about ${hours} hour${hours === 1 ? '' : 's'}.`);
+      AppDialog.alert('Cooldown in progress', `You can turn it off in about ${hours} hour${hours === 1 ? '' : 's'}.`);
       return;
     }
 
@@ -110,9 +131,9 @@ export const ConfigurationScreen = ({ navigation }: any) => {
       const next = { ...current, preventionMode: false, preventionModeOffRequestedAt: null, preventionModeLockedUntil: null };
       updateSettings(next);
       setSettings(next);
-      Alert.alert('Prevention Mode off', 'Uninstall protection has been removed.');
+      AppDialog.alert('Prevention Mode off', 'Uninstall protection has been removed.');
     } catch {
-      Alert.alert('Could not turn it off', 'Try again from Settings.');
+      AppDialog.alert('Could not turn it off', 'Try again from Settings.');
     }
   };
 
@@ -122,8 +143,30 @@ export const ConfigurationScreen = ({ navigation }: any) => {
       ? `Disable cooldown: about ${Math.ceil(preventionDisableRemainingMs() / 3_600_000)}h remaining.`
       : 'Prevents uninstalling Locked during committed blocks.';
 
+  const chooseOverlayDesign = (design: OverlayDesign) => {
+    try {
+      setOverlayDesign(AppBlocker.setOverlayDesign(design));
+      setShowOverlayDesigns(false);
+      selectionHaptic().catch(() => {});
+    } catch {
+      AppDialog.alert('Could not save design', 'Rebuild the native app and try again.');
+    }
+  };
+
+  const importCustomWallpaper = () => {
+    setShowOverlayDesigns(false);
+    try {
+      if (!AppBlocker.openCustomWallpaperPicker()) {
+        AppDialog.alert('Could not open photos', 'Try again from Settings.');
+      }
+    } catch {
+      AppDialog.alert('Unavailable', 'Rebuild the native app and try again.');
+    }
+  };
+
   return (
-    <ScrollView
+    <>
+      <ScrollView
       style={styles.screen}
       contentContainerStyle={[styles.content, { paddingTop: insets.top + Spacing.lg }]}
       showsVerticalScrollIndicator={false}
@@ -178,6 +221,29 @@ export const ConfigurationScreen = ({ navigation }: any) => {
           })}
         </View>
 
+        <Text style={styles.sectionLabel}>LOCK SCREEN</Text>
+        <PressableScale
+          containerStyle={styles.fullWidth}
+          accessibilityRole="button"
+          accessibilityLabel={`Lock screen design, ${overlayDesignName(overlayDesign)}`}
+          accessibilityHint="Choose an animated design or import a custom wallpaper"
+          onPress={() => setShowOverlayDesigns(true)}
+          style={styles.designRow}
+          pressedStyle={styles.pressed}
+        >
+          <OverlayDesignPreview
+            design={overlayDesign}
+            customWallpaperUri={customWallpaperUri}
+            style={styles.designPreview}
+            showQuote={false}
+          />
+          <View style={styles.rowCopy}>
+            <Text style={styles.rowTitle}>Lock screen design</Text>
+            <Text style={styles.rowDetail}>{overlayDesignName(overlayDesign)}</Text>
+          </View>
+          <ChevronRightIcon size={20} color={colors.labelTertiary} />
+        </PressableScale>
+
         <Text style={styles.sectionLabel}>PERMISSIONS</Text>
         <PressableScale
           containerStyle={styles.fullWidth}
@@ -198,8 +264,17 @@ export const ConfigurationScreen = ({ navigation }: any) => {
           </View>
           <ChevronRightIcon size={20} color={colors.labelTertiary} />
         </PressableScale>
-      </View>
-    </ScrollView>
+        </View>
+      </ScrollView>
+      <OverlayDesignSheet
+        visible={showOverlayDesigns}
+        selected={overlayDesign}
+        customWallpaperUri={customWallpaperUri}
+        onSelect={chooseOverlayDesign}
+        onImportCustom={importCustomWallpaper}
+        onDismiss={() => setShowOverlayDesigns(false)}
+      />
+    </>
   );
 };
 
@@ -214,6 +289,8 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   rowCopy: { flex: 1 },
   rowTitle: { ...Type.bodyStrong, color: colors.label },
   rowDetail: { ...Type.footnote, color: colors.labelSecondary, marginTop: 3 },
+  designRow: { minHeight: 104, padding: Spacing.md, borderRadius: Radius.lg, backgroundColor: colors.surface, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
+  designPreview: { width: 72, height: 76, borderRadius: Radius.md },
   segmented: { padding: 4, borderRadius: Radius.md, backgroundColor: colors.surface, flexDirection: 'row' },
   segmentWrap: { flex: 1 },
   segment: { minHeight: 48, borderRadius: Radius.sm, alignItems: 'center' },

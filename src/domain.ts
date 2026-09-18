@@ -22,7 +22,6 @@ export type PhoneLockAccessState = {
   endsAt: number;
   passEndsAt: number | null;
   passesRemaining: number;
-  cooldownEndsAt: number | null;
 };
 
 export type PhoneLockScheduleOccurrence = {
@@ -31,9 +30,9 @@ export type PhoneLockScheduleOccurrence = {
   endsAt: Date;
 };
 
+export const PHONE_LOCK_ALLOWED_APP_LIMIT = 2;
 export const PHONE_LOCK_PASS_COUNT = 2;
-export const PHONE_LOCK_PASS_MS = 60_000;
-export const PHONE_LOCK_COOLDOWN_MS = 5 * 60_000;
+export const PHONE_LOCK_PASS_MS = 2 * 60_000;
 
 const MINUTES_PER_DAY = 24 * 60;
 const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
@@ -81,8 +80,8 @@ export const getPhoneLockScheduleValidationError = (
   if (schedule.startMinute === schedule.endMinute) {
     return 'Start and end times must differ';
   }
-  if (new Set(schedule.allowedPackageNames).size > 5) {
-    return 'Choose up to 5 allowed apps';
+  if (new Set(schedule.allowedPackageNames).size > PHONE_LOCK_ALLOWED_APP_LIMIT) {
+    return `Choose up to ${PHONE_LOCK_ALLOWED_APP_LIMIT} allowed apps`;
   }
   if (!schedule.enabled) return null;
   const intervals = scheduleIntervals(schedule);
@@ -189,28 +188,16 @@ export const resolvePhoneLockAccessState = (
   now: number = Date.now()
 ): PhoneLockAccessState => {
   if (now >= state.endsAt) {
-    return { ...state, passEndsAt: null, passesRemaining: 0, cooldownEndsAt: null };
+    return { ...state, passEndsAt: null, passesRemaining: 0 };
   }
 
-  let next = state;
   if (state.passEndsAt != null && state.passEndsAt <= now) {
-    next = {
+    return {
       ...state,
       passEndsAt: null,
-      cooldownEndsAt:
-        state.passesRemaining === 0
-          ? Math.min(state.endsAt, state.passEndsAt + PHONE_LOCK_COOLDOWN_MS)
-          : state.cooldownEndsAt,
     };
   }
-  if (next.cooldownEndsAt != null && next.cooldownEndsAt <= now) {
-    return {
-      ...next,
-      passesRemaining: PHONE_LOCK_PASS_COUNT,
-      cooldownEndsAt: null,
-    };
-  }
-  return next;
+  return state;
 };
 
 export const requestPhoneLockPass = (
@@ -221,7 +208,6 @@ export const requestPhoneLockPass = (
   if (
     now >= current.endsAt ||
     current.passEndsAt != null ||
-    current.cooldownEndsAt != null ||
     current.passesRemaining <= 0
   ) {
     return null;

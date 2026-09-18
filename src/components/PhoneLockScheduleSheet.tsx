@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -20,6 +19,7 @@ import { Radius, Spacing, Type } from '../colors';
 import {
   getNewPhoneLockScheduleDefaults,
   getPhoneLockScheduleValidationError,
+  PHONE_LOCK_ALLOWED_APP_LIMIT,
   type PhoneLockSchedule as DomainSchedule,
   type Weekday,
 } from '../domain';
@@ -27,6 +27,7 @@ import { useTheme } from '../theme';
 import { AllowedAppsSheet } from './AllowedAppsSheet';
 import { CloseIcon, ChevronRightIcon } from './icons';
 import { PressableScale } from './PressableScale';
+import { AppDialog } from './AppDialog';
 import { TimeRangeSlider } from './TimeRangeSlider';
 
 type Props = {
@@ -99,7 +100,7 @@ export function PhoneLockScheduleSheet({
       schedules as DomainSchedule[]
     );
     if (error) {
-      Alert.alert('Could not save schedule', error);
+      AppDialog.alert('Could not save schedule', error);
       return;
     }
     const { activationNotBefore: _, ...input } = candidate;
@@ -236,7 +237,7 @@ export function PhoneLockScheduleSheet({
                 <View style={styles.allowedCopy}>
                   <Text style={styles.label}>Allowed apps</Text>
                   <Text style={styles.detail}>
-                    {allowedPackageNames.length}/5 selected · Phone always available
+                    {allowedPackageNames.length}/{PHONE_LOCK_ALLOWED_APP_LIMIT} selected · Phone always available
                   </Text>
                 </View>
                 <ChevronRightIcon size={20} color={colors.labelTertiary} />

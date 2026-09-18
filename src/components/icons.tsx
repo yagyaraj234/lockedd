@@ -141,3 +141,15 @@ export const CloseIcon = ({ size = 24, color }: IconProps) => (
     <Path d="M6 6l12 12M18 6 6 18" stroke={stroke(color)} strokeWidth={2} strokeLinecap="round" />
   </Svg>
 );
+
+export const TrashIcon = ({ size = 24, color }: IconProps) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path
+      d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"
+      stroke={stroke(color)}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </Svg>
+);

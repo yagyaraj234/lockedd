@@ -32,6 +32,7 @@
       </intent-filter>
     </activity>
     <activity android:name=".BlockingActivity" android:exported="false" android:theme="@android:style/Theme.NoTitleBar.Fullscreen" android:taskAffinity="" android:excludeFromRecents="true" android:launchMode="singleTop" android:resizeableActivity="false"/>
+    <activity android:name=".WallpaperPickerActivity" android:exported="false" android:theme="@android:style/Theme.Translucent.NoTitleBar" android:taskAffinity="" android:excludeFromRecents="true"/>
     <service android:name=".AppBlockingAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
       <intent-filter>
         <action android:name="android.accessibilityservice.AccessibilityService"/>

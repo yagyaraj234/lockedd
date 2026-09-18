@@ -132,7 +132,7 @@ test('defaults new schedules to the next safe quarter-hour on the selected day',
   });
 });
 
-test('rejects equal schedule times and more than five allowed apps', () => {
+test('rejects equal schedule times and more than two allowed apps', () => {
   const schedule: PhoneLockSchedule = {
     id: 'study',
     name: 'Study',
@@ -153,11 +153,11 @@ test('rejects equal schedule times and more than five allowed apps', () => {
       {
         ...schedule,
         endMinute: 10 * 60,
-        allowedPackageNames: ['1', '2', '3', '4', '5', '6'],
+        allowedPackageNames: ['1', '2', '3'],
       },
       []
     ),
-    'Choose up to 5 allowed apps'
+    'Choose up to 2 allowed apps'
   );
 });
 
@@ -198,38 +198,35 @@ test('validates disabled, overnight, and week-wrapping schedules', () => {
   );
 });
 
-test('restores two one-minute passes after the five-minute cooldown', () => {
+test('allows exactly two two-minute passes for the full lock period', () => {
   const now = 1_000_000;
   const initial: PhoneLockAccessState = {
     endsAt: now + 60 * 60_000,
     passEndsAt: null,
     passesRemaining: 2,
-    cooldownEndsAt: null,
   };
   const first = requestPhoneLockPass(initial, now);
   assert.deepEqual(first, {
     ...initial,
-    passEndsAt: now + 60_000,
+    passEndsAt: now + 2 * 60_000,
     passesRemaining: 1,
   });
 
-  const afterFirst = resolvePhoneLockAccessState(first!, now + 60_000);
-  const second = requestPhoneLockPass(afterFirst, now + 60_000);
+  const afterFirst = resolvePhoneLockAccessState(first!, now + 2 * 60_000);
+  const second = requestPhoneLockPass(afterFirst, now + 2 * 60_000);
   assert.deepEqual(second, {
     ...initial,
-    passEndsAt: now + 2 * 60_000,
+    passEndsAt: now + 4 * 60_000,
     passesRemaining: 0,
   });
 
-  const coolingDown = resolvePhoneLockAccessState(second!, now + 2 * 60_000);
-  assert.deepEqual(coolingDown, {
+  const exhausted = resolvePhoneLockAccessState(second!, now + 4 * 60_000);
+  assert.deepEqual(exhausted, {
     ...initial,
     passEndsAt: null,
     passesRemaining: 0,
-    cooldownEndsAt: now + 7 * 60_000,
   });
-  assert.equal(requestPhoneLockPass(coolingDown, now + 3 * 60_000), null);
-  assert.deepEqual(resolvePhoneLockAccessState(coolingDown, now + 7 * 60_000), initial);
+  assert.equal(requestPhoneLockPass(exhausted, now + 30 * 60_000), null);
 });
 
 test('expires the access cycle at the lock boundary', () => {
@@ -237,14 +234,12 @@ test('expires the access cycle at the lock boundary', () => {
     endsAt: 1_000,
     passEndsAt: 2_000,
     passesRemaining: 1,
-    cooldownEndsAt: 3_000,
   };
 
   assert.deepEqual(resolvePhoneLockAccessState(state, 1_000), {
     ...state,
     passEndsAt: null,
     passesRemaining: 0,
-    cooldownEndsAt: null,
   });
 });
 

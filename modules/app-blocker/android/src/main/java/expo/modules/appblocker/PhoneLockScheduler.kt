@@ -48,9 +48,13 @@ object PhoneLockScheduler {
   const val PHONE_LOCK_ACTIVE_SCHEDULE_ID = "phone_lock_active_schedule_id"
   const val PHONE_LOCK_CHANGED_ACTION = "com.yagyaraj.locked.PHONE_LOCK_CHANGED"
   const val ALARM_ACTION = "com.yagyaraj.locked.PHONE_LOCK_SCHEDULE_ALARM"
+  const val PHONE_LOCK_ALLOWED_APP_LIMIT = 2
   const val PHONE_LOCK_PASS_COUNT = 2
-  const val PHONE_LOCK_PASS_MS = 60_000L
-  const val PHONE_LOCK_COOLDOWN_MS = 5 * 60_000L
+  const val PHONE_LOCK_PASS_MS = 2 * 60_000L
+  const val OVERLAY_DESIGN = "overlay_design"
+  const val CUSTOM_WALLPAPER_URI = "custom_wallpaper_uri"
+  const val DEFAULT_OVERLAY_DESIGN = "sunrise"
+  val OVERLAY_DESIGNS = setOf("sunrise", "orbit", "waves", "bloom", "stars", "grid", "custom")
 
   private const val MINUTES_PER_DAY = 24 * 60
   private const val MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY
@@ -116,7 +120,8 @@ object PhoneLockScheduler {
               startMinute = item.getInt("startMinute"),
               endMinute = item.getInt("endMinute"),
               allowedPackageNames =
-                item.optJSONArray("allowedPackageNames")?.toStringSet() ?: emptySet(),
+                item.optJSONArray("allowedPackageNames")?.toStringSet()
+                  ?.sorted()?.take(PHONE_LOCK_ALLOWED_APP_LIMIT)?.toSet() ?: emptySet(),
               activationNotBefore = item.optLong("activationNotBefore", 0L),
             )
           )
@@ -209,6 +214,14 @@ object PhoneLockScheduler {
 
   fun refresh(context: Context, now: Long = System.currentTimeMillis()) {
     val shared = prefs(context)
+    val storedAllowed =
+      shared.getStringSet(PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
+    if (storedAllowed.size > PHONE_LOCK_ALLOWED_APP_LIMIT) {
+      shared.edit().putStringSet(
+        PHONE_LOCK_ALLOWED_PACKAGES,
+        storedAllowed.sorted().take(PHONE_LOCK_ALLOWED_APP_LIMIT).toSet()
+      ).apply()
+    }
     resolveAccessCycle(shared, now)
     val active = getSchedules(context)
       .asSequence()
@@ -255,20 +268,11 @@ object PhoneLockScheduler {
     val endsAt = shared.getLong(PHONE_LOCK_END, 0L)
     if (endsAt == 0L || endsAt <= now) return
     val passEndsAt = shared.getLong(PHONE_LOCK_PASS_END, 0L)
-    var cooldownEndsAt = shared.getLong(PHONE_LOCK_COOLDOWN_END, 0L)
     val editor = shared.edit()
-    var changed = false
+    var changed = shared.contains(PHONE_LOCK_COOLDOWN_END)
+    if (changed) editor.remove(PHONE_LOCK_COOLDOWN_END)
     if (passEndsAt != 0L && passEndsAt <= now) {
       editor.remove(PHONE_LOCK_PASS_END)
-      if (shared.getInt(PHONE_LOCK_PASSES_REMAINING, 0) == 0 && cooldownEndsAt == 0L) {
-        cooldownEndsAt = minOf(endsAt, passEndsAt + PHONE_LOCK_COOLDOWN_MS)
-        editor.putLong(PHONE_LOCK_COOLDOWN_END, cooldownEndsAt)
-      }
-      changed = true
-    }
-    if (cooldownEndsAt != 0L && cooldownEndsAt <= now) {
-      editor.remove(PHONE_LOCK_COOLDOWN_END)
-      editor.putInt(PHONE_LOCK_PASSES_REMAINING, PHONE_LOCK_PASS_COUNT)
       changed = true
     }
     if (changed) editor.apply()
@@ -308,7 +312,9 @@ object PhoneLockScheduler {
     require(schedule.startMinute in 0 until MINUTES_PER_DAY) { "Invalid start time" }
     require(schedule.endMinute in 0 until MINUTES_PER_DAY) { "Invalid end time" }
     require(schedule.startMinute != schedule.endMinute) { "Start and end times must differ" }
-    require(schedule.allowedPackageNames.size <= 5) { "Choose up to 5 allowed apps" }
+    require(schedule.allowedPackageNames.size <= PHONE_LOCK_ALLOWED_APP_LIMIT) {
+      "Choose up to $PHONE_LOCK_ALLOWED_APP_LIMIT allowed apps"
+    }
     require(schedule.allowedPackageNames.none { isProtectedPackage(context, it) }) {
       "Settings, installers, and Locked cannot be allowed"
     }

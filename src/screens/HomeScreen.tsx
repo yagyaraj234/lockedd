@@ -1,16 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Palette } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
 import { EmptyState } from '../components/EmptyState';
 import { HomeMetrics } from '../components/HomeMetrics';
 import { PressableScale } from '../components/PressableScale';
-import { ChevronRightIcon, PlusIcon } from '../components/icons';
+import { ChevronRightIcon, PlusIcon, TrashIcon } from '../components/icons';
 import { PhoneLockTimerSheet } from '../components/PhoneLockTimerSheet';
+import { AppDialog } from '../components/AppDialog';
 import { PhoneLockScheduleSheet } from '../components/PhoneLockScheduleSheet';
 import { usePermissions } from '../hooks/usePermissions';
-import { formatPhoneLockCountdown, formatPhoneLockDuration } from '../domain';
+import {
+  formatPhoneLockCountdown,
+  formatPhoneLockDuration,
+  PHONE_LOCK_ALLOWED_APP_LIMIT,
+} from '../domain';
 import {
     AppBlocker,
     type PhoneLockSchedule,
@@ -33,7 +38,6 @@ const emptyPhoneLock: PhoneLockState = {
   endsAt: null,
   passEndsAt: null,
   passesRemaining: 0,
-  cooldownEndsAt: null,
   source: null,
   activeScheduleId: null,
   allowedPackageNames: [],
@@ -121,9 +125,9 @@ export const HomeScreen = ({ navigation }: any) => {
       hour: 'numeric',
       minute: '2-digit',
     });
-    Alert.alert(
+    AppDialog.alert(
       `Lock phone for ${durationLabel}?`,
-      `Ends at ${endsAt}. Two 1-minute passes reset after each 5-minute cooldown. Phone and ${allowedPackageNames.length} allowed app${allowedPackageNames.length === 1 ? '' : 's'} stay available. This cannot be stopped early.`,
+      `Ends at ${endsAt}. Two 2-minute passes are available for this lock. Phone and ${allowedPackageNames.length} allowed app${allowedPackageNames.length === 1 ? '' : 's'} stay available. This cannot be stopped early.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -133,7 +137,7 @@ export const HomeScreen = ({ navigation }: any) => {
               AppBlocker.startPhoneLock(durationMs, allowedPackageNames);
               refresh();
             } catch (error) {
-              Alert.alert('Could not start phone lock', errorMessage(error));
+              AppDialog.alert('Could not start phone lock', errorMessage(error));
             }
           },
         },
@@ -147,7 +151,7 @@ export const HomeScreen = ({ navigation }: any) => {
       return;
     }
     if (phoneLock.active) {
-      Alert.alert('Phone Lock is active', 'Schedules can change after the current lock ends.');
+      AppDialog.alert('Phone Lock is active', 'Schedules can change after the current lock ends.');
       return;
     }
     setEditingSchedule(schedule);
@@ -161,13 +165,13 @@ export const HomeScreen = ({ navigation }: any) => {
       setEditingSchedule(null);
       refresh();
     } catch (error) {
-      Alert.alert('Could not save schedule', errorMessage(error));
+      AppDialog.alert('Could not save schedule', errorMessage(error));
     }
   };
 
   const toggleSchedule = (schedule: PhoneLockSchedule) => {
     if (phoneLock.active) {
-      Alert.alert('Phone Lock is active', 'Schedules can change after the current lock ends.');
+      AppDialog.alert('Phone Lock is active', 'Schedules can change after the current lock ends.');
       return;
     }
     if (!permissions.statuses.exactAlarms && !schedule.enabled) {
@@ -178,16 +182,16 @@ export const HomeScreen = ({ navigation }: any) => {
       AppBlocker.setPhoneLockScheduleEnabled(schedule.id, !schedule.enabled);
       refresh();
     } catch (error) {
-      Alert.alert('Could not update schedule', errorMessage(error));
+      AppDialog.alert('Could not update schedule', errorMessage(error));
     }
   };
 
   const deleteSchedule = (schedule: PhoneLockSchedule) => {
     if (phoneLock.active) {
-      Alert.alert('Phone Lock is active', 'Schedules can change after the current lock ends.');
+      AppDialog.alert('Phone Lock is active', 'Schedules can change after the current lock ends.');
       return;
     }
-    Alert.alert(
+    AppDialog.alert(
       'Delete schedule?',
       schedule.name || scheduleTimeRange(schedule),
       [
@@ -200,7 +204,7 @@ export const HomeScreen = ({ navigation }: any) => {
               AppBlocker.deletePhoneLockSchedule(schedule.id);
               refresh();
             } catch (error) {
-              Alert.alert('Could not delete schedule', errorMessage(error));
+              AppDialog.alert('Could not delete schedule', errorMessage(error));
             }
           },
         },
@@ -210,8 +214,6 @@ export const HomeScreen = ({ navigation }: any) => {
 
   const now = Date.now();
   const passActive = phoneLock.passEndsAt != null && phoneLock.passEndsAt > now;
-  const coolingDown =
-    phoneLock.cooldownEndsAt != null && phoneLock.cooldownEndsAt > now;
   const activeSchedule = schedules.find(
     (schedule) => schedule.id === phoneLock.activeScheduleId
   );
@@ -258,31 +260,23 @@ export const HomeScreen = ({ navigation }: any) => {
             <>
               <Text style={styles.phoneLockKicker}>
                 {passActive
-                  ? '1-MINUTE PASS'
-                  : coolingDown
-                    ? 'PASS COOLDOWN'
-                    : phoneLock.source === 'schedule'
+                  ? '2-MINUTE PASS'
+                  : phoneLock.source === 'schedule'
                       ? 'SCHEDULED LOCK'
                       : 'PHONE LOCKED'}
               </Text>
               <Text style={styles.phoneLockCountdown}>
                 {formatPhoneLockCountdown(
-                  passActive
-                    ? phoneLock.passEndsAt
-                    : coolingDown
-                      ? phoneLock.cooldownEndsAt
-                      : phoneLock.endsAt,
+                  passActive ? phoneLock.passEndsAt : phoneLock.endsAt,
                   now
                 )}
               </Text>
               <Text style={styles.phoneLockBody}>
                 {passActive
                   ? `Full phone available now · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`
-                  : coolingDown
-                    ? 'Phone and allowed apps remain available until passes reset.'
-                    : `${activeSchedule?.name || 'Phone and allowed apps stay available'} · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`}
+                  : `${activeSchedule?.name || 'Phone and allowed apps stay available'} · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`}
               </Text>
-              {passActive || coolingDown ? (
+              {passActive ? (
                 <Text style={styles.phoneLockEnd}>
                   Phone lock ends in {formatPhoneLockCountdown(phoneLock.endsAt, now)}
                 </Text>
@@ -293,7 +287,7 @@ export const HomeScreen = ({ navigation }: any) => {
               <Text style={styles.phoneLockKicker}>DEEP FOCUS</Text>
               <Text style={styles.phoneLockTitle}>Lock your phone</Text>
               <Text style={styles.phoneLockBody}>
-                Phone, up to five allowed apps, and repeating short passes stay available.
+                Phone, up to two allowed apps, and two 2-minute passes stay available.
               </Text>
               <PressableScale
                 accessibilityRole="button"
@@ -383,7 +377,7 @@ export const HomeScreen = ({ navigation }: any) => {
                       {formatScheduleDays(schedule.days)} · {scheduleTimeRange(schedule)}
                     </Text>
                     <Text style={styles.scheduleDetail}>
-                      {schedule.allowedPackageNames.length}/5 allowed apps
+                      {schedule.allowedPackageNames.length}/{PHONE_LOCK_ALLOWED_APP_LIMIT} allowed apps
                     </Text>
                   </PressableScale>
                   <View style={styles.scheduleActions}>
@@ -404,7 +398,7 @@ export const HomeScreen = ({ navigation }: any) => {
                       style={styles.deleteSchedule}
                       pressedStyle={styles.pressed}
                     >
-                      <Text style={styles.deleteScheduleText}>Delete</Text>
+                      <TrashIcon size={19} color={colors.danger} />
                     </PressableScale>
                   </View>
                 </View>
@@ -561,11 +555,11 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   scheduleDetail: { ...Type.footnote, color: colors.labelSecondary, marginTop: 2 },
   scheduleActions: { alignItems: 'center', gap: 2 },
   deleteSchedule: {
-    minHeight: 36,
-    paddingHorizontal: Spacing.sm,
+    width: 40,
+    minHeight: 40,
     borderRadius: Radius.pill,
+    alignItems: 'center',
   },
-  deleteScheduleText: { ...Type.footnoteStrong, color: colors.danger },
   list: { backgroundColor: colors.surface, borderRadius: Radius.lg, overflow: 'hidden' },
   row: { minHeight: 72, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, flexDirection: 'row', alignItems: 'center' },
   icon: { width: 44, height: 44, borderRadius: 11, marginRight: Spacing.md },

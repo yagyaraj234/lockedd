@@ -247,7 +247,9 @@ class AppBlockerModule : Module() {
       }
       val allowedPackages =
         allowedPackageNames.toSet() - PhoneLockScheduler.alwaysAllowedPackages(context)
-      require(allowedPackages.size <= 5) { "Choose up to 5 allowed apps" }
+      require(allowedPackages.size <= PhoneLockScheduler.PHONE_LOCK_ALLOWED_APP_LIMIT) {
+        "Choose up to ${PhoneLockScheduler.PHONE_LOCK_ALLOWED_APP_LIMIT} allowed apps"
+      }
       require(allowedPackages.none { PhoneLockScheduler.isProtectedPackage(context, it) }) {
         "Settings, installers, and Locked cannot be allowed"
       }
@@ -290,6 +292,34 @@ class AppBlockerModule : Module() {
       getPhoneLockState(blockerPrefs())
     }
 
+    Function("getOverlayDesign") {
+      overlayDesign()
+    }
+
+    Function("getCustomWallpaperUri") {
+      blockerPrefs().getString(PhoneLockScheduler.CUSTOM_WALLPAPER_URI, null)
+    }
+
+    Function("openCustomWallpaperPicker") {
+      context.startActivity(
+        Intent()
+          .setClassName(context, "${context.packageName}.WallpaperPickerActivity")
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      )
+      true
+    }
+
+    Function("setOverlayDesign") { design: String ->
+      require(design in PhoneLockScheduler.OVERLAY_DESIGNS) { "Unknown overlay design" }
+      require(
+        design != "custom" ||
+          blockerPrefs().getString(PhoneLockScheduler.CUSTOM_WALLPAPER_URI, null) != null
+      ) { "Import a custom wallpaper first" }
+      blockerPrefs().edit().putString(PhoneLockScheduler.OVERLAY_DESIGN, design).apply()
+      PhoneLockScheduler.notifyLockChanged(context)
+      design
+    }
+
   }
 
   private fun getPhoneLockState(
@@ -307,7 +337,6 @@ class AppBlockerModule : Module() {
         "endsAt" to null,
         "passEndsAt" to null,
         "passesRemaining" to 0,
-        "cooldownEndsAt" to null,
         "source" to null,
         "activeScheduleId" to null,
         "allowedPackageNames" to emptyList<String>(),
@@ -316,14 +345,11 @@ class AppBlockerModule : Module() {
 
     val storedPassEnd = prefs.getLong(PhoneLockScheduler.PHONE_LOCK_PASS_END, 0L)
     val passEndsAt = storedPassEnd.takeIf { it > now }
-    val cooldownEndsAt =
-      prefs.getLong(PhoneLockScheduler.PHONE_LOCK_COOLDOWN_END, 0L).takeIf { it > now }
     return mapOf(
       "active" to true,
       "endsAt" to endsAt,
       "passEndsAt" to passEndsAt,
       "passesRemaining" to prefs.getInt(PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING, 0),
-      "cooldownEndsAt" to cooldownEndsAt,
       "source" to prefs.getString(PhoneLockScheduler.PHONE_LOCK_SOURCE, null),
       "activeScheduleId" to
         prefs.getString(PhoneLockScheduler.PHONE_LOCK_ACTIVE_SCHEDULE_ID, null),
@@ -332,6 +358,11 @@ class AppBlockerModule : Module() {
           ?: emptySet()).sorted(),
     )
   }
+
+  private fun overlayDesign(prefs: android.content.SharedPreferences = blockerPrefs()): String =
+    prefs.getString(PhoneLockScheduler.OVERLAY_DESIGN, PhoneLockScheduler.DEFAULT_OVERLAY_DESIGN)
+      ?.takeIf { it in PhoneLockScheduler.OVERLAY_DESIGNS }
+      ?: PhoneLockScheduler.DEFAULT_OVERLAY_DESIGN
 
   private fun scheduleMap(schedule: PhoneLockScheduleNative): Map<String, Any?> =
     mapOf(

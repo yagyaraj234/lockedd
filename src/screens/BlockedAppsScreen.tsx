@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Palette } from '../colors';
 import { Radius, Spacing, Type } from '../colors';
 import { EmptyState } from '../components/EmptyState';
 import { PressableScale } from '../components/PressableScale';
+import { AppDialog } from '../components/AppDialog';
 import { LockIcon, PlusIcon } from '../components/icons';
 import { usePermissions } from '../hooks/usePermissions';
 import {
@@ -55,10 +56,10 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
 
   const remove = (app: BlockedApp) => {
     if (isDisableLocked(app)) {
-      Alert.alert('Removal is locked', lockLabel(app));
+      AppDialog.alert('Removal is locked', lockLabel(app));
       return;
     }
-    Alert.alert('Remove block?', `${app.appName} will be available again.`, [
+    AppDialog.alert('Remove block?', `${app.appName} will be available again.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',

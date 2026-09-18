@@ -13,13 +13,13 @@ export interface BlockedAppEntry {
 }
 
 export type PhoneLockDurationMs = number;
+export type OverlayDesign = 'sunrise' | 'orbit' | 'waves' | 'bloom' | 'stars' | 'grid' | 'custom';
 
 export interface PhoneLockState {
   active: boolean;
   endsAt: number | null;
   passEndsAt: number | null;
   passesRemaining: number;
-  cooldownEndsAt: number | null;
   source: 'manual' | 'schedule' | null;
   activeScheduleId: string | null;
   allowedPackageNames: string[];
@@ -57,4 +57,8 @@ export declare const AppBlocker: {
     allowedPackageNames?: string[]
   ): PhoneLockState;
   getPhoneLockState(): PhoneLockState;
+  getOverlayDesign(): OverlayDesign;
+  getCustomWallpaperUri(): string | null;
+  openCustomWallpaperPicker(): boolean;
+  setOverlayDesign(design: OverlayDesign): OverlayDesign;
 };
