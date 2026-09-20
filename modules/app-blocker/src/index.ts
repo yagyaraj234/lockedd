@@ -34,10 +34,6 @@ export const AppBlocker = {
     return AppBlockerModule.setBlockedApps(apps);
   },
 
-  unlockPermanentBlockForTwoMinutes(packageName: string): number {
-    return AppBlockerModule.unlockPermanentBlockForTwoMinutes(packageName);
-  },
-
   setPrivateDns(hostname: string): boolean {
     return AppBlockerModule.setPrivateDns(hostname);
   },

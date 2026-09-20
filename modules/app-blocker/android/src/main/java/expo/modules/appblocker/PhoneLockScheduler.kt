@@ -49,8 +49,6 @@ object PhoneLockScheduler {
   const val PHONE_LOCK_CHANGED_ACTION = "com.yagyaraj.locked.PHONE_LOCK_CHANGED"
   const val ALARM_ACTION = "com.yagyaraj.locked.PHONE_LOCK_SCHEDULE_ALARM"
   const val PHONE_LOCK_ALLOWED_APP_LIMIT = 2
-  const val PHONE_LOCK_PASS_COUNT = 2
-  const val PHONE_LOCK_PASS_MS = 2 * 60_000L
   const val OVERLAY_DESIGN = "overlay_design"
   const val CUSTOM_WALLPAPER_URI = "custom_wallpaper_uri"
   const val DEFAULT_OVERLAY_DESIGN = "sunrise"
@@ -222,7 +220,7 @@ object PhoneLockScheduler {
         storedAllowed.sorted().take(PHONE_LOCK_ALLOWED_APP_LIMIT).toSet()
       ).apply()
     }
-    resolveAccessCycle(shared, now)
+    resolveAccessCycle(shared)
     val active = getSchedules(context)
       .asSequence()
       .filter { it.enabled }
@@ -242,7 +240,7 @@ object PhoneLockScheduler {
           .putLong(PHONE_LOCK_END, active.endsAt)
           .remove(PHONE_LOCK_PASS_END)
           .remove(PHONE_LOCK_COOLDOWN_END)
-          .putInt(PHONE_LOCK_PASSES_REMAINING, PHONE_LOCK_PASS_COUNT)
+          .remove(PHONE_LOCK_PASSES_REMAINING)
           .putStringSet(PHONE_LOCK_ALLOWED_PACKAGES, active.schedule.allowedPackageNames)
           .putString(PHONE_LOCK_SOURCE, "schedule")
           .putString(PHONE_LOCK_ACTIVE_SCHEDULE_ID, active.schedule.id)
@@ -263,16 +261,17 @@ object PhoneLockScheduler {
 
   fun resolveAccessCycle(
     shared: android.content.SharedPreferences,
-    now: Long = System.currentTimeMillis(),
   ) {
-    val endsAt = shared.getLong(PHONE_LOCK_END, 0L)
-    if (endsAt == 0L || endsAt <= now) return
-    val passEndsAt = shared.getLong(PHONE_LOCK_PASS_END, 0L)
     val editor = shared.edit()
-    var changed = shared.contains(PHONE_LOCK_COOLDOWN_END)
-    if (changed) editor.remove(PHONE_LOCK_COOLDOWN_END)
-    if (passEndsAt != 0L && passEndsAt <= now) {
-      editor.remove(PHONE_LOCK_PASS_END)
+    var changed = false
+    listOf(PHONE_LOCK_PASS_END, PHONE_LOCK_PASSES_REMAINING, PHONE_LOCK_COOLDOWN_END).forEach { key ->
+      if (shared.contains(key)) {
+        editor.remove(key)
+        changed = true
+      }
+    }
+    shared.all.keys.filter { it.startsWith("allow_") }.forEach { key ->
+      editor.remove(key)
       changed = true
     }
     if (changed) editor.apply()

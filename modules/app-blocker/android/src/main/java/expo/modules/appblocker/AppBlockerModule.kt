@@ -36,7 +36,6 @@ class AppBlockerModule : Module() {
     private const val PHONE_LOCK_MIN_DURATION_MS = 5 * 60 * 1000L
     private const val PHONE_LOCK_MAX_DURATION_MS = 24 * 60 * 60 * 1000L
     private const val PHONE_LOCK_DURATION_STEP_MS = 5 * 60 * 1000L
-    private const val PERMANENT_BLOCK_UNLOCK_MS = 2 * 60 * 1000L
   }
 
   private val context: Context
@@ -44,8 +43,8 @@ class AppBlockerModule : Module() {
 
   // Bridge file shared with the accessibility service / BlockingActivity. Same
   // app, so SharedPreferences are shared by appId. The service cannot read MMKV
-  // (Nitro), so the enabled blocked list + temporary-allow grants are mirrored
-  // here. Keep these literals in sync with com.yagyaraj.locked.BlockerPrefs.
+  // (Nitro), so the enabled blocked list is mirrored here. Keep these literals
+  // in sync with com.yagyaraj.locked.BlockerPrefs.
   private fun blockerPrefs() =
     context.getSharedPreferences("locked_blocker", Context.MODE_PRIVATE)
 
@@ -114,40 +113,16 @@ class AppBlockerModule : Module() {
       val prefs = blockerPrefs()
       val pkgs = apps.map { it.packageName }.toSet()
       val editor = prefs.edit()
-      // Prune stale until_/allow_ keys for packages no longer blocked.
       prefs.all.keys
         .filter {
-          (it.startsWith("until_") && it.removePrefix("until_") !in pkgs) ||
-            (it.startsWith("allow_") && it.removePrefix("allow_") !in pkgs)
+          it.startsWith("allow_") ||
+            (it.startsWith("until_") && it.removePrefix("until_") !in pkgs)
         }
         .forEach { editor.remove(it) }
       editor.putStringSet("blockedPackages", pkgs)
       apps.forEach { editor.putLong("until_${it.packageName}", it.blockUntil?.toLong() ?: 0L) }
       editor.apply()
       true
-    }
-
-    // A permanent block can receive one, fixed two-minute pass. Native validation
-    // prevents JS callers from granting access to timed or no-longer-blocked apps,
-    // and an active pass is returned unchanged so it cannot be topped up.
-    Function("unlockPermanentBlockForTwoMinutes") { packageName: String ->
-      val prefs = blockerPrefs()
-      val blocked = prefs.getStringSet("blockedPackages", emptySet()) ?: emptySet()
-      require(packageName in blocked) { "App is not currently blocked" }
-      require(prefs.getLong("until_$packageName", 0L) == 0L) {
-        "Only permanent blocks can be temporarily unlocked"
-      }
-
-      val now = System.currentTimeMillis()
-      val allowKey = "allow_$packageName"
-      val activeUntil = prefs.getLong(allowKey, 0L)
-      if (activeUntil > now) {
-        activeUntil.toDouble()
-      } else {
-        val endsAt = now + PERMANENT_BLOCK_UNLOCK_MS
-        prefs.edit().putLong(allowKey, endsAt).apply()
-        endsAt.toDouble()
-      }
     }
 
     // Set Android Private DNS (DNS-over-TLS) to a custom hostname.
@@ -293,10 +268,7 @@ class AppBlockerModule : Module() {
         .putLong(PhoneLockScheduler.PHONE_LOCK_END, now + duration)
         .remove(PhoneLockScheduler.PHONE_LOCK_PASS_END)
         .remove(PhoneLockScheduler.PHONE_LOCK_COOLDOWN_END)
-        .putInt(
-          PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING,
-          PhoneLockScheduler.PHONE_LOCK_PASS_COUNT
-        )
+        .remove(PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING)
         .putStringSet(PhoneLockScheduler.PHONE_LOCK_ALLOWED_PACKAGES, allowedPackages)
         .putString(PhoneLockScheduler.PHONE_LOCK_SOURCE, "manual")
         .remove(PhoneLockScheduler.PHONE_LOCK_ACTIVE_SCHEDULE_ID)
@@ -350,7 +322,7 @@ class AppBlockerModule : Module() {
     prefs: android.content.SharedPreferences,
     now: Long = System.currentTimeMillis()
   ): Map<String, Any?> {
-    PhoneLockScheduler.resolveAccessCycle(prefs, now)
+    PhoneLockScheduler.resolveAccessCycle(prefs)
     val endsAt = prefs.getLong(PhoneLockScheduler.PHONE_LOCK_END, 0L)
     if (endsAt <= now) {
       if (endsAt != 0L) {
@@ -359,21 +331,15 @@ class AppBlockerModule : Module() {
       return mapOf(
         "active" to false,
         "endsAt" to null,
-        "passEndsAt" to null,
-        "passesRemaining" to 0,
         "source" to null,
         "activeScheduleId" to null,
         "allowedPackageNames" to emptyList<String>(),
       )
     }
 
-    val storedPassEnd = prefs.getLong(PhoneLockScheduler.PHONE_LOCK_PASS_END, 0L)
-    val passEndsAt = storedPassEnd.takeIf { it > now }
     return mapOf(
       "active" to true,
       "endsAt" to endsAt,
-      "passEndsAt" to passEndsAt,
-      "passesRemaining" to prefs.getInt(PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING, 0),
       "source" to prefs.getString(PhoneLockScheduler.PHONE_LOCK_SOURCE, null),
       "activeScheduleId" to
         prefs.getString(PhoneLockScheduler.PHONE_LOCK_ACTIVE_SCHEDULE_ID, null),

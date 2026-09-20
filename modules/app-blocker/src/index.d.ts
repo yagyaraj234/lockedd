@@ -18,8 +18,6 @@ export type OverlayDesign = 'sunrise' | 'orbit' | 'waves' | 'bloom' | 'stars' | 
 export interface PhoneLockState {
   active: boolean;
   endsAt: number | null;
-  passEndsAt: number | null;
-  passesRemaining: number;
   source: 'manual' | 'schedule' | null;
   activeScheduleId: string | null;
   allowedPackageNames: string[];
@@ -42,8 +40,6 @@ export declare const AppBlocker: {
   getInstalledApps(): Promise<InstalledApp[]>;
   isAccessibilityEnabled(): Promise<boolean>;
   setBlockedApps(apps: BlockedAppEntry[]): boolean;
-  /** Grants one non-extendable two-minute pass for a currently permanent block. */
-  unlockPermanentBlockForTwoMinutes(packageName: string): number;
   setPrivateDns(hostname: string): boolean;
   hasWriteSecureSettings(): boolean;
   getPrivateDns(): { mode: string; specifier: string };
