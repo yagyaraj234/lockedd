@@ -18,8 +18,6 @@ export type OverlayDesign = 'sunrise' | 'orbit' | 'waves' | 'bloom' | 'stars' | 
 export interface PhoneLockState {
   active: boolean;
   endsAt: number | null;
-  passEndsAt: number | null;
-  passesRemaining: number;
   source: 'manual' | 'schedule' | null;
   activeScheduleId: string | null;
   allowedPackageNames: string[];

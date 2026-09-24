@@ -43,8 +43,8 @@ class AppBlockerModule : Module() {
 
   // Bridge file shared with the accessibility service / BlockingActivity. Same
   // app, so SharedPreferences are shared by appId. The service cannot read MMKV
-  // (Nitro), so the enabled blocked list + temporary-allow grants are mirrored
-  // here. Keep these literals in sync with com.yagyaraj.locked.BlockerPrefs.
+  // (Nitro), so the enabled blocked list is mirrored here. Keep these literals
+  // in sync with com.yagyaraj.locked.BlockerPrefs.
   private fun blockerPrefs() =
     context.getSharedPreferences("locked_blocker", Context.MODE_PRIVATE)
 
@@ -113,11 +113,10 @@ class AppBlockerModule : Module() {
       val prefs = blockerPrefs()
       val pkgs = apps.map { it.packageName }.toSet()
       val editor = prefs.edit()
-      // Prune stale until_/allow_ keys for packages no longer blocked.
       prefs.all.keys
         .filter {
-          (it.startsWith("until_") && it.removePrefix("until_") !in pkgs) ||
-            (it.startsWith("allow_") && it.removePrefix("allow_") !in pkgs)
+          it.startsWith("allow_") ||
+            (it.startsWith("until_") && it.removePrefix("until_") !in pkgs)
         }
         .forEach { editor.remove(it) }
       editor.putStringSet("blockedPackages", pkgs)
@@ -269,10 +268,7 @@ class AppBlockerModule : Module() {
         .putLong(PhoneLockScheduler.PHONE_LOCK_END, now + duration)
         .remove(PhoneLockScheduler.PHONE_LOCK_PASS_END)
         .remove(PhoneLockScheduler.PHONE_LOCK_COOLDOWN_END)
-        .putInt(
-          PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING,
-          PhoneLockScheduler.PHONE_LOCK_PASS_COUNT
-        )
+        .remove(PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING)
         .putStringSet(PhoneLockScheduler.PHONE_LOCK_ALLOWED_PACKAGES, allowedPackages)
         .putString(PhoneLockScheduler.PHONE_LOCK_SOURCE, "manual")
         .remove(PhoneLockScheduler.PHONE_LOCK_ACTIVE_SCHEDULE_ID)
@@ -326,7 +322,7 @@ class AppBlockerModule : Module() {
     prefs: android.content.SharedPreferences,
     now: Long = System.currentTimeMillis()
   ): Map<String, Any?> {
-    PhoneLockScheduler.resolveAccessCycle(prefs, now)
+    PhoneLockScheduler.resolveAccessCycle(prefs)
     val endsAt = prefs.getLong(PhoneLockScheduler.PHONE_LOCK_END, 0L)
     if (endsAt <= now) {
       if (endsAt != 0L) {
@@ -335,21 +331,15 @@ class AppBlockerModule : Module() {
       return mapOf(
         "active" to false,
         "endsAt" to null,
-        "passEndsAt" to null,
-        "passesRemaining" to 0,
         "source" to null,
         "activeScheduleId" to null,
         "allowedPackageNames" to emptyList<String>(),
       )
     }
 
-    val storedPassEnd = prefs.getLong(PhoneLockScheduler.PHONE_LOCK_PASS_END, 0L)
-    val passEndsAt = storedPassEnd.takeIf { it > now }
     return mapOf(
       "active" to true,
       "endsAt" to endsAt,
-      "passEndsAt" to passEndsAt,
-      "passesRemaining" to prefs.getInt(PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING, 0),
       "source" to prefs.getString(PhoneLockScheduler.PHONE_LOCK_SOURCE, null),
       "activeScheduleId" to
         prefs.getString(PhoneLockScheduler.PHONE_LOCK_ACTIVE_SCHEDULE_ID, null),

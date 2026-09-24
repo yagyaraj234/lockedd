@@ -59,7 +59,6 @@ import kotlin.math.sin
 object BlockerPrefs {
   const val FILE = "locked_blocker"
   const val BLOCKED_PACKAGES = "blockedPackages"
-  const val ALLOW_PREFIX = "allow_"
   const val UNTIL_PREFIX = "until_"
 
   // Block-attempt stats. Counts each distinct time a blocked app was intercepted,
@@ -71,12 +70,8 @@ object BlockerPrefs {
   const val STATS_TODAY_DATE = "stats_today_date"
 
   const val PHONE_LOCK_END = PhoneLockScheduler.PHONE_LOCK_END
-  const val PHONE_LOCK_PASS_END = PhoneLockScheduler.PHONE_LOCK_PASS_END
-  const val PHONE_LOCK_PASSES_REMAINING = PhoneLockScheduler.PHONE_LOCK_PASSES_REMAINING
   const val PHONE_LOCK_ALLOWED_PACKAGES = PhoneLockScheduler.PHONE_LOCK_ALLOWED_PACKAGES
   const val PHONE_LOCK_CHANGED_ACTION = PhoneLockScheduler.PHONE_LOCK_CHANGED_ACTION
-  const val PHONE_LOCK_PASS_MS = PhoneLockScheduler.PHONE_LOCK_PASS_MS
-  const val PHONE_LOCK_PASS_COUNT = PhoneLockScheduler.PHONE_LOCK_PASS_COUNT
 
   // Package names for the Android Settings app across major OEMs.
   val SETTINGS_PACKAGES = setOf(
@@ -306,10 +301,6 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       return
     }
 
-    // Temporary pass still valid?
-    val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + pkg, 0L)
-    if (allowedUntil > System.currentTimeMillis()) return
-
     // Just launched the block screen for this package — don't relaunch on top of
     // the event burst. Time-debounced (not sticky) so a genuine reopen re-blocks.
     val now = System.currentTimeMillis()
@@ -366,9 +357,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       root.recycle()
       if (pkg != null && pkg != packageName && blocked.contains(pkg)) {
         val blockedUntil = prefs.getLong(BlockerPrefs.UNTIL_PREFIX + pkg, 0L)
-        val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + pkg, 0L)
         val debounced = lastBlocked == pkg && now - lastBlockLaunchAt < RELAUNCH_DEBOUNCE_MS
-        if ((blockedUntil == 0L || now <= blockedUntil) && allowedUntil <= now && !debounced) {
+        if ((blockedUntil == 0L || now <= blockedUntil) && !debounced) {
           lastWindowsBlockAt = now
           lastBlocked = pkg
           lastBlockLaunchAt = now
@@ -627,7 +617,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       clearPhoneLock(prefs)
       return false
     }
-    PhoneLockScheduler.resolveAccessCycle(prefs, now)
+    PhoneLockScheduler.resolveAccessCycle(prefs)
 
     if (isKeyguardActive()) {
       hidePhoneLockOverlay()
@@ -635,12 +625,6 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       return true
     }
 
-    val passEndsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_PASS_END, 0L)
-    if (passEndsAt > now) {
-      hidePhoneLockOverlay()
-      schedulePhoneLockTick()
-      return true
-    }
     val activePackage = foregroundPackage ?: currentForegroundPackage()
     if (activePackage != null && isPhoneLockAllowed(activePackage, prefs)) {
       hidePhoneLockOverlay()
@@ -689,16 +673,14 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     applyOverlayDesign(prefs)
     overlayTitleText?.text = "Phone locked"
     overlayTimerText?.text = formatCountdown(endsAt - now)
-    val passes = prefs.getInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, 0)
     val allowedPackages =
       prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
-    overlayAppText?.text = if (passes == 1) {
-      "1 pass left · 2 minutes"
+    overlayAppText?.text = if (allowedPackages.isEmpty()) {
+      "Phone stays available"
     } else {
-      "$passes passes left · 2 minutes each"
+      "${allowedPackages.size} allowed app${if (allowedPackages.size == 1) "" else "s"} · Phone stays available"
     }
-    overlayHintText?.text =
-      "Phone and allowed apps stay available. This lock cannot end early."
+    overlayHintText?.text = "This lock cannot end early."
     overlayAllowedActions?.apply {
       visibility = View.VISIBLE
       if (allowedPackages != renderedAllowedPackages) {
@@ -721,7 +703,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
               val padding = (4 * resources.displayMetrics.density).toInt()
               setPadding(padding, padding, padding, padding)
               scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
-              contentDescription = "Open $label without using a pass"
+              contentDescription = "Open $label"
               setOnClickListener {
                 if (isPhone) openPhone() else packageName?.let(::openAllowedApp)
               }
@@ -740,18 +722,10 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       }
     }
     overlayPrimaryAction?.apply {
-      text = if (passes > 0) {
-        "Use a 2-minute pass"
-      } else {
-        "No passes available"
-      }
-      contentDescription = if (passes > 0) {
-        "Use a 2-minute pass, $passes remaining"
-      } else {
-        "No phone passes available"
-      }
-      isEnabled = passes > 0
-      alpha = if (isEnabled) 1f else 0.45f
+      text = "Return Home"
+      contentDescription = "Return Home"
+      isEnabled = true
+      alpha = 1f
     }
     overlayRoot?.visibility = View.VISIBLE
     if (!wasVisible) {
@@ -777,44 +751,11 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayRoot?.visibility = View.GONE
   }
 
-  private fun usePhonePass() {
-    val prefs = getSharedPreferences(BlockerPrefs.FILE, Context.MODE_PRIVATE)
-    val now = System.currentTimeMillis()
-    PhoneLockScheduler.resolveAccessCycle(prefs, now)
-    val endsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_END, 0L)
-    val remaining = prefs.getInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, 0)
-    if (prefs.getLong(BlockerPrefs.PHONE_LOCK_PASS_END, 0L) > now) {
-      return
-    }
-    val next = nextPhonePass(now, endsAt, remaining) ?: return
-    prefs.edit()
-      .putInt(BlockerPrefs.PHONE_LOCK_PASSES_REMAINING, next.first)
-      .putLong(BlockerPrefs.PHONE_LOCK_PASS_END, next.second)
-      .apply()
-    hidePhoneLockOverlay()
-    schedulePhoneLockTick()
-  }
-
-  private fun nextPhonePass(now: Long, endsAt: Long, remaining: Int): Pair<Int, Long>? {
-    if (now >= endsAt || remaining <= 0) return null
-    return Pair(remaining - 1, minOf(endsAt, now + BlockerPrefs.PHONE_LOCK_PASS_MS))
-  }
-
   private fun isPhoneLockExpired(now: Long, endsAt: Long): Boolean = endsAt != 0L && endsAt <= now
 
   private fun runPhoneLockSelfCheck() {
     val now = 1_000L
     val endsAt = now + 60 * 60 * 1000L
-    var remaining = BlockerPrefs.PHONE_LOCK_PASS_COUNT
-    repeat(BlockerPrefs.PHONE_LOCK_PASS_COUNT) { index ->
-      val next = checkNotNull(nextPhonePass(now, endsAt, remaining))
-      remaining = next.first
-      check(remaining == 1 - index)
-      check(next.second == now + BlockerPrefs.PHONE_LOCK_PASS_MS)
-    }
-    check(remaining == 0)
-    check(nextPhonePass(now, endsAt, remaining) == null)
-    check(nextPhonePass(endsAt, endsAt, BlockerPrefs.PHONE_LOCK_PASS_COUNT) == null)
     check(isPhoneLockExpired(endsAt, endsAt))
     check(!isPhoneLockExpired(now, endsAt))
   }
@@ -940,7 +881,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   }
 
   private fun handlePrimaryAction() {
-    if (overlayMode == OverlayMode.PHONE_LOCK) usePhonePass() else dismissOverlay()
+    handleOverlayBack()
   }
 
   private fun startOverlayTimer() {

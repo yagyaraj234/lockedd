@@ -18,12 +18,6 @@ export type PhoneLockSchedule = {
   activationNotBefore: number | null;
 };
 
-export type PhoneLockAccessState = {
-  endsAt: number;
-  passEndsAt: number | null;
-  passesRemaining: number;
-};
-
 export type PhoneLockScheduleOccurrence = {
   schedule: PhoneLockSchedule;
   startsAt: Date;
@@ -31,8 +25,6 @@ export type PhoneLockScheduleOccurrence = {
 };
 
 export const PHONE_LOCK_ALLOWED_APP_LIMIT = 2;
-export const PHONE_LOCK_PASS_COUNT = 2;
-export const PHONE_LOCK_PASS_MS = 2 * 60_000;
 
 const MINUTES_PER_DAY = 24 * 60;
 const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY;
@@ -181,42 +173,6 @@ export const getManualPhoneLockConflict = (
     }
   }
   return earliest;
-};
-
-export const resolvePhoneLockAccessState = (
-  state: PhoneLockAccessState,
-  now: number = Date.now()
-): PhoneLockAccessState => {
-  if (now >= state.endsAt) {
-    return { ...state, passEndsAt: null, passesRemaining: 0 };
-  }
-
-  if (state.passEndsAt != null && state.passEndsAt <= now) {
-    return {
-      ...state,
-      passEndsAt: null,
-    };
-  }
-  return state;
-};
-
-export const requestPhoneLockPass = (
-  state: PhoneLockAccessState,
-  now: number = Date.now()
-): PhoneLockAccessState | null => {
-  const current = resolvePhoneLockAccessState(state, now);
-  if (
-    now >= current.endsAt ||
-    current.passEndsAt != null ||
-    current.passesRemaining <= 0
-  ) {
-    return null;
-  }
-  return {
-    ...current,
-    passEndsAt: Math.min(current.endsAt, now + PHONE_LOCK_PASS_MS),
-    passesRemaining: current.passesRemaining - 1,
-  };
 };
 
 export const migrateThemePreference = (value: unknown): ThemePreference =>

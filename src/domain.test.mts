@@ -13,9 +13,6 @@ import {
   migrateThemePreference,
   phoneLockDurationFromParts,
   phoneLockRemainingMs,
-  requestPhoneLockPass,
-  resolvePhoneLockAccessState,
-  type PhoneLockAccessState,
   type PhoneLockSchedule,
 } from './domain.ts';
 
@@ -196,51 +193,6 @@ test('validates disabled, overnight, and week-wrapping schedules', () => {
     getPhoneLockScheduleValidationError({ ...saturdayNight, startMinute: -1 }, []),
     'Enter valid start and end times'
   );
-});
-
-test('allows exactly two two-minute passes for the full lock period', () => {
-  const now = 1_000_000;
-  const initial: PhoneLockAccessState = {
-    endsAt: now + 60 * 60_000,
-    passEndsAt: null,
-    passesRemaining: 2,
-  };
-  const first = requestPhoneLockPass(initial, now);
-  assert.deepEqual(first, {
-    ...initial,
-    passEndsAt: now + 2 * 60_000,
-    passesRemaining: 1,
-  });
-
-  const afterFirst = resolvePhoneLockAccessState(first!, now + 2 * 60_000);
-  const second = requestPhoneLockPass(afterFirst, now + 2 * 60_000);
-  assert.deepEqual(second, {
-    ...initial,
-    passEndsAt: now + 4 * 60_000,
-    passesRemaining: 0,
-  });
-
-  const exhausted = resolvePhoneLockAccessState(second!, now + 4 * 60_000);
-  assert.deepEqual(exhausted, {
-    ...initial,
-    passEndsAt: null,
-    passesRemaining: 0,
-  });
-  assert.equal(requestPhoneLockPass(exhausted, now + 30 * 60_000), null);
-});
-
-test('expires the access cycle at the lock boundary', () => {
-  const state: PhoneLockAccessState = {
-    endsAt: 1_000,
-    passEndsAt: 2_000,
-    passesRemaining: 1,
-  };
-
-  assert.deepEqual(resolvePhoneLockAccessState(state, 1_000), {
-    ...state,
-    passEndsAt: null,
-    passesRemaining: 0,
-  });
 });
 
 test('finds the active weekly schedule and honors activation-not-before', () => {
