@@ -35,6 +35,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -144,6 +145,29 @@ const val LATENCY_LOG = false
  */
 class AppBlockingAccessibilityService : AccessibilityService() {
 
+  private companion object {
+    val IN_CALL_PACKAGES = setOf(
+      "com.android.incallui",
+      "com.samsung.android.incallui",
+      "com.android.server.telecom",
+    )
+
+    // System screens an allowed app opens on top of itself. Only let through
+    // while an allowed app was the last thing in front (see allowedAppInFront),
+    // so they can't be used as a way into the rest of the phone.
+    val PHONE_LOCK_HELPER_PACKAGES = setOf(
+      "android",
+      "com.android.intentresolver",
+      "com.android.permissioncontroller",
+      "com.google.android.permissioncontroller",
+      "com.android.documentsui",
+      "com.google.android.documentsui",
+      "com.android.providers.media.module",
+      "com.google.android.providers.media.module",
+      "com.google.android.gms",
+    )
+  }
+
   private enum class OverlayMode { NONE, APP_BLOCK, PHONE_LOCK }
 
   // Last package we put up the block screen for, plus when. Prevents relaunching
@@ -203,11 +227,36 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   private var overlayRunning = false
   private var overlayMode = OverlayMode.NONE
 
+  // Set when the user taps an allowed app (or Phone) on the Phone Lock overlay.
+  // Until that app's window reaches the front (and for a moment after, while the
+  // launcher's late window events trickle in) the launcher or nothing is on top.
+  // The overlay stays up meanwhile, but firing HOME then would cancel the launch
+  // we just started. Any other app ends this at once.
+  private var pendingAllowedLaunchUntil = 0L
+  private val ALLOWED_LAUNCH_GRACE_MS = 10_000L
+
+  // True while the last app seen in front during a Phone Lock was allowed. Lets
+  // the system helpers an allowed app opens (permission prompt, chooser, file or
+  // photo picker, Google sign-in) through instead of locking over them.
+  private var allowedAppInFront = false
+
+  // When the allowed app from a launch first showed. The launcher's late window
+  // event only trails the app by a moment, so it's only ignored briefly after.
+  private var allowedAppShownAt = 0L
+  private val LATE_LAUNCHER_EVENT_MS = 1500L
+
+  // When the window list was first seen with no app window in it.
+  private var noAppWindowSince = 0L
+  private val NO_APP_WINDOW_MS = 150L
+
   private val phoneLockTick = object : Runnable {
     override fun run() {
       syncPhoneLockOverlay()
     }
   }
+
+  // Separate from phoneLockTick so rescheduling the 1 s tick doesn't cancel it.
+  private val noAppWindowRecheck = Runnable { syncPhoneLockOverlay() }
 
   private val phoneLockReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
@@ -258,7 +307,12 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       lastForegroundPackage = pkg
       pkg
     } else {
-      currentForegroundPackage() ?: pkg
+      visibleAppPackage() ?: pkg.also {
+        // No app window is readable yet (e.g. just after leaving an allowed app
+        // for the launcher). Trust this event over the stale last package, or
+        // the allowed app keeps counting as "in front" for seconds afterwards.
+        if (it != packageName && it != "com.android.systemui") lastForegroundPackage = it
+      }
     }
     if (handlePhoneLock(phoneLockPackage, prefs)) return
 
@@ -393,12 +447,42 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
   private fun launchBlockingActivity(pkg: String, prefs: SharedPreferences) {
     recordBlockAttempt(prefs)
-    if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-    // Background the app so it's not interactive under the overlay.
-    performGlobalAction(GLOBAL_ACTION_HOME)
     if (LATENCY_LOG) Log.d("BlockLatency", "showOverlay pkg=$pkg t=${System.currentTimeMillis()}")
-    // Show overlay synchronously — no activity, no race, no render gap.
-    overlayHandler.post { showAppBlockOverlay(pkg) }
+    // Cover the app first, synchronously, then background it once the overlay
+    // is on screen. Firing HOME first let the launcher show before the block.
+    showAppBlockOverlay(pkg)
+    afterOverlayDrawn {
+      if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+      performGlobalAction(GLOBAL_ACTION_HOME)
+    }
+  }
+
+  // Runs [action] once the overlay has drawn a frame (or after a short timeout if
+  // it never draws, e.g. screen off). Firing HOME in the same instant the overlay
+  // is made visible lets the launcher draw first, which flashes the home screen.
+  private fun afterOverlayDrawn(action: () -> Unit) {
+    val root = overlayRoot ?: return action()
+    var done = false
+    fun runOnce() {
+      if (done) return
+      done = true
+      action()
+    }
+    val observer = root.viewTreeObserver
+    val listener = object : ViewTreeObserver.OnDrawListener {
+      override fun onDraw() {
+        overlayHandler.post {
+          if (observer.isAlive) observer.removeOnDrawListener(this)
+          runOnce()
+        }
+      }
+    }
+    observer.addOnDrawListener(listener)
+    root.invalidate()
+    overlayHandler.postDelayed({
+      if (observer.isAlive) observer.removeOnDrawListener(listener)
+      runOnce()
+    }, 250L)
   }
 
   private fun setupOverlay() {
@@ -554,7 +638,6 @@ class AppBlockingAccessibilityService : AccessibilityService() {
       setOnClickListener { handlePrimaryAction() }
       contentDescription = "Return Home"
       isFocusable = true
-      isFocusableInTouchMode = true
     }
     overlayPrimaryAction = primaryAction
     root.addView(primaryAction, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (52 * d).toInt()).apply {
@@ -627,15 +710,51 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
     val activePackage = foregroundPackage ?: currentForegroundPackage()
     if (activePackage != null && isPhoneLockAllowed(activePackage, prefs)) {
+      // Keep pendingAllowedLaunchUntil running: the launcher can still emit a
+      // late window event after the app shows, which must not re-lock over it.
+      if (!allowedAppInFront && now < pendingAllowedLaunchUntil) allowedAppShownAt = now
+      allowedAppInFront = true
       hidePhoneLockOverlay()
       schedulePhoneLockTick()
       return true
     }
 
+    val isHelper = activePackage != null && activePackage in PHONE_LOCK_HELPER_PACKAGES
+    val launchingAllowedApp = now < pendingAllowedLaunchUntil
+    // An allowed app can hand off to a helper before its own window shows (e.g.
+    // straight into Google sign-in), so helpers count during the launch too.
+    val helperOverAllowedApp = isHelper && (allowedAppInFront || launchingAllowedApp)
+    if (helperOverAllowedApp) {
+      allowedAppInFront = true
+      hidePhoneLockOverlay()
+      schedulePhoneLockTick()
+      return true
+    }
+    if (launchingAllowedApp && isLaunchTransition(activePackage)) {
+      if (!allowedAppInFront) {
+        // Still opening: keep the lock on screen until the allowed app is in
+        // front, but don't fire HOME, which would cancel the launch.
+        showPhoneLockOverlay(prefs, endsAt, now)
+        schedulePhoneLockTick()
+        return true
+      }
+      if (now - allowedAppShownAt < LATE_LAUNCHER_EVENT_MS && visibleAppPackage() == null) {
+        // Late launcher event just after the allowed app showed, with no app
+        // window readable yet: leave the allowed app alone. A real HOME makes
+        // the launcher window readable and locks on the next check.
+        schedulePhoneLockTick()
+        return true
+      }
+    }
+    pendingAllowedLaunchUntil = 0L
+    allowedAppInFront = false
+
     val becameVisible = showPhoneLockOverlay(prefs, endsAt, now)
     if (becameVisible) {
-      if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
-      performGlobalAction(GLOBAL_ACTION_HOME)
+      afterOverlayDrawn {
+        if (isInSplitScreen()) performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+        performGlobalAction(GLOBAL_ACTION_HOME)
+      }
     }
     schedulePhoneLockTick()
     return true
@@ -648,6 +767,8 @@ class AppBlockingAccessibilityService : AccessibilityService() {
 
   private fun clearPhoneLock(prefs: SharedPreferences) {
     PhoneLockScheduler.clearActiveLock(prefs)
+    pendingAllowedLaunchUntil = 0L
+    allowedAppInFront = false
     overlayHandler.removeCallbacks(phoneLockTick)
     if (overlayMode == OverlayMode.PHONE_LOCK) {
       overlayRunning = false
@@ -707,8 +828,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
               setOnClickListener {
                 if (isPhone) openPhone() else packageName?.let(::openAllowedApp)
               }
+              // Not focusable in touch mode: that makes the first tap only move
+              // focus to the icon, so the app opened only on a second tap.
               isFocusable = true
-              isFocusableInTouchMode = true
             },
             LinearLayout.LayoutParams(
               (64 * resources.displayMetrics.density).toInt(),
@@ -761,27 +883,39 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   }
 
   private fun openPhone() {
-    val intent = Intent(Intent.ACTION_DIAL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    try {
-      hidePhoneLockOverlay()
-      startActivity(intent)
-      schedulePhoneLockTick()
-    } catch (_: Exception) {
-      syncPhoneLockOverlay()
-    }
+    launchFromPhoneLock(Intent(Intent.ACTION_DIAL).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
   }
 
   private fun openAllowedApp(packageName: String) {
     val intent = packageManager.getLaunchIntentForPackage(packageName)
       ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
       ?: return
+    launchFromPhoneLock(intent)
+  }
+
+  // Start the activity with the overlay still up, so nothing else shows while it
+  // opens. handlePhoneLock hides the overlay once the app is actually in front.
+  private fun launchFromPhoneLock(intent: Intent) {
     try {
-      hidePhoneLockOverlay()
+      pendingAllowedLaunchUntil = System.currentTimeMillis() + ALLOWED_LAUNCH_GRACE_MS
       startActivity(intent)
       schedulePhoneLockTick()
     } catch (_: Exception) {
+      pendingAllowedLaunchUntil = 0L
       syncPhoneLockOverlay()
     }
+  }
+
+  // What can be in front for a moment between tapping an allowed app and its
+  // window appearing: the launcher, our own window, or nothing readable.
+  private fun isLaunchTransition(packageName: String?): Boolean {
+    if (packageName == null || packageName == this.packageName) return true
+    if (packageName == "com.android.systemui") return true
+    @Suppress("DEPRECATION")
+    val homes = packageManager.queryIntentActivities(
+      Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0
+    )
+    return homes.any { it.activityInfo?.packageName == packageName }
   }
 
   private fun phonePackages(): Set<String> {
@@ -794,6 +928,9 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     @Suppress("DEPRECATION")
     packageManager.resolveActivity(Intent(Intent.ACTION_DIAL), 0)
       ?.activityInfo?.packageName?.let(packages::add)
+    // The in-call screen is a separate package from the dialer on AOSP and
+    // Samsung; without it an incoming or ongoing call gets locked over.
+    packages += IN_CALL_PACKAGES
     return packages
   }
 
@@ -803,6 +940,31 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     )
 
   private fun currentForegroundPackage(): String? {
+    visibleAppPackage()?.let {
+      noAppWindowSince = 0L
+      return it
+    }
+    val hasAppWindow = try {
+      windows.any { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+    } catch (_: Exception) {
+      true
+    }
+    if (hasAppWindow) {
+      noAppWindowSince = 0L
+      return lastForegroundPackage
+    }
+    // No app window on screen at all: whatever was last in front has gone (e.g.
+    // HOME from an allowed app, with the launcher not readable yet). Wait a
+    // moment in case it's a blip, then stop reporting the stale package.
+    val now = System.currentTimeMillis()
+    if (noAppWindowSince == 0L) {
+      noAppWindowSince = now
+      overlayHandler.postDelayed(noAppWindowRecheck, NO_APP_WINDOW_MS)
+    }
+    return if (now - noAppWindowSince < NO_APP_WINDOW_MS) lastForegroundPackage else null
+  }
+
+  private fun visibleAppPackage(): String? {
     val current = try {
       windows.firstNotNullOfOrNull { window ->
         if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@firstNotNullOfOrNull null
@@ -819,7 +981,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     if (current != null) {
       lastForegroundPackage = current
     }
-    return current ?: lastForegroundPackage
+    return current
   }
 
   private fun formatCountdown(remainingMs: Long): String {
