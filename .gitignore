@@ -9,7 +9,7 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native signing / secrets
+# Native
 .kotlin/
 *.orig.*
 *.jks
@@ -26,17 +26,11 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
-# macOS / editors
+# macOS
 .DS_Store
 *.pem
-.idea/
-*.iml
-*.hprof
-*.swp
-*~
 
 # local env files
-.env
 .env*.local
 
 # typescript
@@ -52,24 +46,8 @@ yarn-error.*
 /android/.gradle/
 /android/local.properties
 /android/app/.cxx/
-/android/.cxx/
 
-# Gradle / Kotlin / Android build artifacts (app + local Expo modules)
-.gradle/
-**/.cxx/
-**/android/build/
-**/android/.gradle/
-**/android/local.properties
+# build artifacts
 *.apk
-*.aab
-*.ap_
-*.aar
-*.dex
-
-# copied leftover / local-only files
-/Configure
-/locked.apk
-
-# test coverage
-coverage/
-.nyc_output/
+*.zip
+modules/*/android/build/

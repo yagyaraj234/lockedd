@@ -155,6 +155,7 @@ export function PhoneLockTimerSheet({ visible, onConfirm, onDismiss }: Props) {
               scrollRef={minuteRef}
             />
           </View>
+          <Text style={styles.note}>Two passes total, 2 minutes each. They do not reset during this lock.</Text>
 
           <PressableScale
             containerStyle={styles.fullWidth}
@@ -219,9 +220,10 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   wheelItem: { height: ITEM_HEIGHT, justifyContent: 'center', alignItems: 'center' },
   wheelValue: { ...Type.body, color: colors.labelTertiary, fontVariant: ['tabular-nums'] },
   wheelValueSelected: { ...Type.title, color: colors.label },
+  note: { ...Type.footnote, color: colors.labelSecondary, textAlign: 'center', marginTop: Spacing.lg },
   allowedApps: {
     minHeight: 68,
-    marginTop: Spacing.xl,
+    marginTop: Spacing.lg,
     paddingHorizontal: Spacing.lg,
     borderRadius: Radius.md,
     backgroundColor: colors.surface,

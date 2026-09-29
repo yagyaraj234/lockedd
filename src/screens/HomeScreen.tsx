@@ -36,6 +36,8 @@ const formatTimeRemaining = (blockUntil: number) => {
 const emptyPhoneLock: PhoneLockState = {
   active: false,
   endsAt: null,
+  passEndsAt: null,
+  passesRemaining: 0,
   source: null,
   activeScheduleId: null,
   allowedPackageNames: [],
@@ -125,7 +127,7 @@ export const HomeScreen = ({ navigation }: any) => {
     });
     AppDialog.alert(
       `Lock phone for ${durationLabel}?`,
-      `Ends at ${endsAt}. Phone and ${allowedPackageNames.length} allowed app${allowedPackageNames.length === 1 ? '' : 's'} stay available. This cannot be stopped early.`,
+      `Ends at ${endsAt}. Two 2-minute passes are available for this lock. Phone and ${allowedPackageNames.length} allowed app${allowedPackageNames.length === 1 ? '' : 's'} stay available. This cannot be stopped early.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -211,6 +213,7 @@ export const HomeScreen = ({ navigation }: any) => {
   };
 
   const now = Date.now();
+  const passActive = phoneLock.passEndsAt != null && phoneLock.passEndsAt > now;
   const activeSchedule = schedules.find(
     (schedule) => schedule.id === phoneLock.activeScheduleId
   );
@@ -256,21 +259,35 @@ export const HomeScreen = ({ navigation }: any) => {
           {phoneLock.active ? (
             <>
               <Text style={styles.phoneLockKicker}>
-                {phoneLock.source === 'schedule' ? 'SCHEDULED LOCK' : 'PHONE LOCKED'}
+                {passActive
+                  ? '2-MINUTE PASS'
+                  : phoneLock.source === 'schedule'
+                      ? 'SCHEDULED LOCK'
+                      : 'PHONE LOCKED'}
               </Text>
               <Text style={styles.phoneLockCountdown}>
-                {formatPhoneLockCountdown(phoneLock.endsAt, now)}
+                {formatPhoneLockCountdown(
+                  passActive ? phoneLock.passEndsAt : phoneLock.endsAt,
+                  now
+                )}
               </Text>
               <Text style={styles.phoneLockBody}>
-                {activeSchedule?.name || 'Phone and allowed apps stay available'}
+                {passActive
+                  ? `Full phone available now · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`
+                  : `${activeSchedule?.name || 'Phone and allowed apps stay available'} · ${phoneLock.passesRemaining} pass${phoneLock.passesRemaining === 1 ? '' : 'es'} left`}
               </Text>
+              {passActive ? (
+                <Text style={styles.phoneLockEnd}>
+                  Phone lock ends in {formatPhoneLockCountdown(phoneLock.endsAt, now)}
+                </Text>
+              ) : null}
             </>
           ) : (
             <>
               <Text style={styles.phoneLockKicker}>DEEP FOCUS</Text>
               <Text style={styles.phoneLockTitle}>Lock your phone</Text>
               <Text style={styles.phoneLockBody}>
-                Phone and up to two allowed apps stay available. This cannot be stopped early.
+                Phone, up to two allowed apps, and two 2-minute passes stay available.
               </Text>
               <PressableScale
                 accessibilityRole="button"
@@ -475,6 +492,7 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   phoneLockTitle: { ...Type.title, color: colors.label, marginTop: Spacing.sm },
   phoneLockCountdown: { fontSize: 38, lineHeight: 44, fontWeight: '700', letterSpacing: -0.6, color: colors.label, marginTop: Spacing.sm },
   phoneLockBody: { ...Type.body, color: colors.labelSecondary, marginTop: Spacing.sm, maxWidth: 520 },
+  phoneLockEnd: { ...Type.footnote, color: colors.labelSecondary, marginTop: Spacing.xs },
   phoneLockAction: { alignSelf: 'flex-start', minHeight: 50, marginTop: Spacing.xl, paddingHorizontal: Spacing.lg, borderRadius: Radius.pill, backgroundColor: colors.accent, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   phoneLockActionPressed: { backgroundColor: colors.accent },
   phoneLockActionText: { ...Type.bodyStrong, color: colors.onAccent },

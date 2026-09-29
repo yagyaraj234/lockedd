@@ -108,8 +108,7 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
                           <Text style={[styles.lockText, !locked && styles.readyText]}>{lockLabel(app)}</Text>
                         </View>
                       </View>
-                      <View style={styles.actions}>
-                        {!locked ? (
+                      {!locked ? (
                         <PressableScale
                           accessibilityRole="button"
                           accessibilityLabel={`Remove ${app.appName}`}
@@ -119,8 +118,7 @@ export const BlockedAppsScreen = ({ navigation }: any) => {
                         >
                           <Text style={styles.removeText}>Remove</Text>
                         </PressableScale>
-                        ) : null}
-                      </View>
+                      ) : null}
                     </View>
                     {index < apps.length - 1 ? <View style={styles.separator} /> : null}
                   </View>
@@ -159,7 +157,6 @@ const makeStyles = (colors: Palette) => StyleSheet.create({
   lockLine: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3 },
   lockText: { ...Type.footnote, color: colors.labelTertiary },
   readyText: { color: colors.accent },
-  actions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
   remove: { minHeight: 48, borderRadius: Radius.pill, paddingHorizontal: Spacing.md, alignItems: 'center' },
   removeText: { ...Type.footnoteStrong, color: colors.danger },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginLeft: 76 },
