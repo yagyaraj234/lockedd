@@ -719,10 +719,12 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     }
 
     val passEndsAt = prefs.getLong(BlockerPrefs.PHONE_LOCK_PASS_END, 0L)
+    // A pass only lifts the Phone Lock; blocked apps must still go through the
+    // normal app-block check, so fall through instead of claiming the event.
     if (passEndsAt > now) {
-      hidePhoneLockOverlay()
+      if (overlayMode != OverlayMode.APP_BLOCK) hidePhoneLockOverlay()
       schedulePhoneLockTick()
-      return true
+      return false
     }
     val activePackage = foregroundPackage ?: currentForegroundPackage()
     if (activePackage != null && isPhoneLockAllowed(activePackage, prefs)) {
@@ -994,9 +996,18 @@ class AppBlockingAccessibilityService : AccessibilityService() {
   }
 
   private fun isPhoneLockAllowed(packageName: String, prefs: SharedPreferences): Boolean =
-    packageName in phonePackages() || packageName in (
+    !isAppBlocked(packageName, prefs) && (packageName in phonePackages() || packageName in (
       prefs.getStringSet(BlockerPrefs.PHONE_LOCK_ALLOWED_PACKAGES, emptySet()) ?: emptySet()
-    )
+    ))
+
+  private fun isAppBlocked(packageName: String, prefs: SharedPreferences): Boolean {
+    val blocked = prefs.getStringSet(BlockerPrefs.BLOCKED_PACKAGES, emptySet()) ?: emptySet()
+    if (packageName !in blocked) return false
+    val now = System.currentTimeMillis()
+    val blockedUntil = prefs.getLong(BlockerPrefs.UNTIL_PREFIX + packageName, 0L)
+    val allowedUntil = prefs.getLong(BlockerPrefs.ALLOW_PREFIX + packageName, 0L)
+    return (blockedUntil == 0L || now <= blockedUntil) && allowedUntil <= now
+  }
 
   private fun currentForegroundPackage(): String? {
     visibleAppPackage()?.let {
@@ -1072,6 +1083,7 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayRoot?.visibility = View.VISIBLE
     overlayRoot?.requestFocus()
     startOverlayTimer()
+    resumePhoneLockTick()
     if (animationsEnabled()) {
       runOverlayBreathingPhase(0)
     } else {
@@ -1090,6 +1102,16 @@ class AppBlockingAccessibilityService : AccessibilityService() {
     overlayHandler.removeCallbacksAndMessages(null)
     overlayRoot?.visibility = View.GONE
     performGlobalAction(GLOBAL_ACTION_HOME)
+    resumePhoneLockTick()
+  }
+
+  // The app-block overlay clears every pending callback, including the Phone
+  // Lock tick; without it the lock wouldn't return when a pass ends.
+  private fun resumePhoneLockTick() {
+    val prefs = getSharedPreferences(BlockerPrefs.FILE, Context.MODE_PRIVATE)
+    if (prefs.getLong(BlockerPrefs.PHONE_LOCK_END, 0L) > System.currentTimeMillis()) {
+      schedulePhoneLockTick()
+    }
   }
 
   private fun handleOverlayBack() {
